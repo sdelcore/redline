@@ -34,67 +34,80 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redline.viewer.data.CheckSummary
-import com.redline.viewer.data.PR
-import com.redline.viewer.data.Repo
-import com.redline.viewer.data.SampleData
+import com.redline.viewer.Loadable
+import com.redline.viewer.data.github.GhPull
+import com.redline.viewer.data.github.GhRepo
+import com.redline.viewer.data.timeAgo
 import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
 
 @Composable
 fun PRListScreen(
-    repoIdx: Int,
-    onSelectRepo: (Int) -> Unit,
-    onOpenPR: (PR) -> Unit,
+    repo: GhRepo,
+    pulls: Loadable<List<GhPull>>,
+    onBack: () -> Unit,
+    onOpenPR: (GhPull) -> Unit,
+    onRetry: () -> Unit,
 ) {
-    val repos = SampleData.Repos
-    val repo = repos[repoIdx]
-    val prs = remember(repo.id) { SampleData.PRs.filter { it.repo == repo.id } }
     var filter by remember { mutableStateOf("open") }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(RedlineColors.Bg)
-            .windowInsetsPadding(WindowInsets.systemBars)
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        Header(repo = repo)
-        FilterTabs(filter = filter, prCount = prs.size, onFilter = { filter = it })
+        Header(repo = repo, onBack = onBack)
+        FilterTabs(
+            filter = filter,
+            prCount = (pulls as? Loadable.Ok)?.value?.size ?: 0,
+            onFilter = { filter = it },
+        )
 
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = 80.dp),
-        ) {
-            items(prs) { pr -> PRCard(pr, onOpen = { onOpenPR(pr) }) }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (pulls) {
+                Loadable.Idle, Loadable.Loading -> Center("loading pull requests…")
+                is Loadable.Err -> ErrorBlock(pulls.message, onRetry)
+                is Loadable.Ok -> if (pulls.value.isEmpty()) {
+                    Center("no open pull requests")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 80.dp)) {
+                        items(pulls.value, key = { it.number }) { pr ->
+                            PRCard(pr = pr, onOpen = { onOpenPR(pr) })
+                        }
+                    }
+                }
+            }
         }
-
-        BottomRepoNav(repos = repos, activeIdx = repoIdx, onSelect = onSelectRepo)
     }
 }
 
 @Composable
-private fun Header(repo: Repo) {
+private fun Header(repo: GhRepo, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.dp, RedlineColors.BorderSoft)
-            .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 14.dp),
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        BackIcon(onClick = onBack)
+        Spacer(Modifier.width(2.dp))
+        // mini red-slash badge — tap returns to repos
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(26.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(RedlineColors.Surface2)
                 .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
+                .clickable(onClick = onBack)
                 .drawBehind {
                     val pad = size.width * 0.18f
                     drawLine(
@@ -106,33 +119,56 @@ private fun Header(repo: Repo) {
                     )
                 },
         )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Spacer(Modifier.width(8.dp))
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onBack),
+        ) {
             Text(
-                "${repo.owner}/",
+                "${repo.owner.login}/",
                 fontFamily = JetBrainsMono,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 color = RedlineColors.TextMute,
             )
-            Text(
-                repo.name,
-                fontFamily = JetBrainsMono,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = RedlineColors.Text,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    repo.name,
+                    fontFamily = JetBrainsMono,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    color = RedlineColors.Text,
+                )
+                Spacer(Modifier.width(6.dp))
+                Box(modifier = Modifier.size(10.dp).drawBehind {
+                    val p = Path().apply {
+                        moveTo(size.width * 0.3f, size.height * 0.2f)
+                        lineTo(size.width * 0.6f, size.height * 0.5f)
+                        lineTo(size.width * 0.3f, size.height * 0.8f)
+                    }
+                    drawPath(p, RedlineColors.TextMute, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
+                })
+            }
         }
     }
-    BorderRow()
+    HDivider()
 }
 
 @Composable
-private fun BorderRow() {
+private fun BackIcon(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(RedlineColors.BorderSoft)
+            .size(36.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .drawBehind {
+                val p = Path().apply {
+                    moveTo(size.width * 0.6f, size.height * 0.3f)
+                    lineTo(size.width * 0.35f, size.height * 0.5f)
+                    lineTo(size.width * 0.6f, size.height * 0.7f)
+                }
+                drawPath(p, RedlineColors.Text, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
+            },
     )
 }
 
@@ -140,9 +176,9 @@ private fun BorderRow() {
 private fun FilterTabs(filter: String, prCount: Int, onFilter: (String) -> Unit) {
     val tabs = listOf(
         "open" to prCount,
-        "review" to 2,
-        "mine" to 1,
-        "closed" to 84,
+        "review" to 0,
+        "mine" to 0,
+        "closed" to 0,
     )
     Row(
         modifier = Modifier
@@ -183,16 +219,13 @@ private fun FilterTabs(filter: String, prCount: Int, onFilter: (String) -> Unit)
             }
         }
     }
-    BorderRow()
+    HDivider()
 }
 
 @Composable
-private fun PRCard(pr: PR, onOpen: () -> Unit) {
-    val checkColor = when (pr.checks) {
-        CheckSummary.Pass -> RedlineColors.Green
-        CheckSummary.Fail -> RedlineColors.Accent
-        CheckSummary.Pending -> RedlineColors.Yellow
-    }
+private fun PRCard(pr: GhPull, onOpen: () -> Unit) {
+    val author = pr.user?.login.orEmpty()
+    val avatarColor = avatarColorFor(author)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -204,11 +237,11 @@ private fun PRCard(pr: PR, onOpen: () -> Unit) {
                 modifier = Modifier
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(pr.avatar),
+                    .background(avatarColor),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    pr.author.take(1).uppercase(),
+                    author.take(1).uppercase().ifEmpty { "?" },
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
@@ -217,16 +250,15 @@ private fun PRCard(pr: PR, onOpen: () -> Unit) {
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                // top meta row
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "#${pr.id}",
+                        "#${pr.number}",
                         fontFamily = JetBrainsMono,
                         fontSize = 11.sp,
                         color = RedlineColors.TextMute,
                     )
-                    Spacer(Modifier.width(8.dp))
                     if (pr.draft) {
+                        Spacer(Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(3.dp))
@@ -240,12 +272,10 @@ private fun PRCard(pr: PR, onOpen: () -> Unit) {
                                 color = RedlineColors.TextDim,
                             )
                         }
-                        Spacer(Modifier.width(8.dp))
                     }
-                    GlowDot(color = checkColor)
                     Spacer(Modifier.weight(1f))
                     Text(
-                        pr.opened,
+                        timeAgo(pr.updated_at),
                         fontFamily = JetBrainsMono,
                         fontSize = 11.sp,
                         color = RedlineColors.TextMute,
@@ -262,58 +292,35 @@ private fun PRCard(pr: PR, onOpen: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(8.dp))
-                // branch row
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    BranchChip(pr.branch, color = RedlineColors.Blue)
+                    BranchChip(pr.head.ref, color = RedlineColors.Blue)
                     Spacer(Modifier.width(6.dp))
                     Text("→", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.TextMute)
                     Spacer(Modifier.width(6.dp))
-                    BranchChip(pr.base, color = RedlineColors.TextDim)
+                    BranchChip(pr.base.ref, color = RedlineColors.TextDim)
                 }
                 Spacer(Modifier.height(8.dp))
-                // stats row
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "[${pr.files}]",
+                        "@$author",
                         fontFamily = JetBrainsMono,
                         fontSize = 11.sp,
                         color = RedlineColors.TextMute,
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Text("+${pr.additions}", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.Green)
-                    Spacer(Modifier.width(14.dp))
-                    Text("−${pr.deletions}", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.Accent)
-                    Spacer(Modifier.weight(1f))
-                    if (pr.comments > 0) {
+                    if ((pr.review_comments + pr.comments) > 0) {
+                        Spacer(Modifier.width(14.dp))
                         Text(
-                            "💬 ${pr.comments}",
+                            "💬 ${pr.review_comments + pr.comments}",
                             fontFamily = JetBrainsMono,
                             fontSize = 11.sp,
                             color = RedlineColors.TextMute,
                         )
-                        Spacer(Modifier.width(8.dp))
                     }
-                    RatioBar(pr.additions, pr.deletions)
                 }
             }
         }
     }
-    BorderRow()
-}
-
-@Composable
-private fun GlowDot(color: Color) {
-    Box(
-        modifier = Modifier
-            .size(8.dp)
-            .drawBehind {
-                drawCircle(
-                    color = color.copy(alpha = 0.5f),
-                    radius = size.minDimension,
-                )
-                drawCircle(color = color, radius = size.minDimension / 2f)
-            },
-    )
+    HDivider()
 }
 
 @Composable
@@ -334,73 +341,54 @@ private fun BranchChip(name: String, color: Color) {
 }
 
 @Composable
-private fun RatioBar(additions: Int, deletions: Int) {
-    val total = (additions + deletions).coerceAtLeast(1)
-    val green = (additions * 5 / total)
-    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        for (i in 0 until 5) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .background(
-                        when {
-                            i < green -> RedlineColors.Green
-                            deletions > 0 -> RedlineColors.Accent
-                            else -> RedlineColors.Border
-                        }
-                    ),
-            )
+private fun Center(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextMute)
+    }
+}
+
+@Composable
+private fun ErrorBlock(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(message, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.Accent)
+        Spacer(Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(RedlineColors.Surface2)
+                .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
+                .clickable(onClick = onRetry)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Text("retry", fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextDim)
         }
     }
 }
 
 @Composable
-private fun BottomRepoNav(repos: List<Repo>, activeIdx: Int, onSelect: (Int) -> Unit) {
+private fun HDivider() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(RedlineColors.Border)
+            .background(RedlineColors.BorderSoft)
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(RedlineColors.Surface),
-    ) {
-        repos.forEachIndexed { i, r ->
-            val active = i == activeIdx
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onSelect(i) }
-                    .drawBehind {
-                        if (active) {
-                            drawLine(
-                                color = RedlineColors.Accent,
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, 0f),
-                                strokeWidth = 2.dp.toPx(),
-                            )
-                        }
-                    }
-                    .padding(vertical = 12.dp, horizontal = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    "${r.owner}/",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 10.sp,
-                    color = if (active) RedlineColors.TextDim else RedlineColors.TextMute,
-                )
-                Text(
-                    r.name,
-                    fontFamily = JetBrainsMono,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 11.sp,
-                    color = if (active) RedlineColors.Text else RedlineColors.TextMute,
-                )
-            }
-        }
-    }
 }
 
+private fun avatarColorFor(login: String): Color {
+    if (login.isEmpty()) return Color(0xFF6E7681)
+    val palette = listOf(
+        0xFFF97316, 0xFF22D3EE, 0xFF3B82F6, 0xFFA855F7, 0xFFEC4899,
+        0xFF14B8A6, 0xFFFBBF24, 0xFFEF4444, 0xFF8B5CF6, 0xFF10B981,
+    )
+    return Color(palette[(login.hashCode().toUInt().toInt() and 0x7FFFFFFF) % palette.size])
+}

@@ -17,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,11 +28,16 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.redline.viewer.data.CheckSummary
+import com.redline.viewer.data.PR
 import com.redline.viewer.data.SampleData
+import com.redline.viewer.data.github.GhPull
+import com.redline.viewer.data.timeAgo
 import com.redline.viewer.ui.diff.DiffViewScreen
 import com.redline.viewer.ui.files.FileBrowserScreen
 import com.redline.viewer.ui.login.LoginScreen
 import com.redline.viewer.ui.prlist.PRListScreen
+import com.redline.viewer.ui.repos.RepoPickerScreen
 import com.redline.viewer.ui.review.CommentComposer
 import com.redline.viewer.ui.review.ComposerContext
 import com.redline.viewer.ui.review.ComposerKind
@@ -43,12 +49,12 @@ import kotlinx.coroutines.delay
 
 private object Routes {
     const val Login = "login"
+    const val Repos = "repos"
     const val PRList = "prList"
-    const val Files = "files/{prId}"
-    const val Diff = "diff/{prId}/{fileIdx}"
+    const val Files = "files"
+    const val Diff = "diff/{fileIdx}"
 
-    fun files(prId: Int) = "files/$prId"
-    fun diff(prId: Int, fileIdx: Int) = "diff/$prId/$fileIdx"
+    fun diff(fileIdx: Int) = "diff/$fileIdx"
 }
 
 @Composable
@@ -56,23 +62,26 @@ fun RedlineApp() {
     val vm: AppViewModel = viewModel()
     val token by vm.token.collectAsState()
     val authState by vm.authState.collectAsState()
+    val viewer by vm.viewer.collectAsState()
+    val repos by vm.repos.collectAsState()
+    val pulls by vm.pulls.collectAsState()
+    val activeRepo by vm.activeRepo.collectAsState()
+    val activePull by vm.activePull.collectAsState()
     val pending by vm.pending.collectAsState()
     val toast by vm.toast.collectAsState()
 
-    var repoIdx by remember { mutableIntStateOf(0) }
     var composer by remember { mutableStateOf<ComposerContext?>(null) }
     var reviewOpen by remember { mutableStateOf(false) }
-    var reviewPrId by remember { mutableIntStateOf(0) }
 
     val nav = rememberNavController()
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
 
-    // Single source of truth: drive navigation off token state.
+    // Login ↔ everything-else routing follows token state.
     LaunchedEffect(token) {
         val authed = !token.isNullOrBlank()
         when {
             authed && currentRoute == Routes.Login -> {
-                nav.navigate(Routes.PRList) {
+                nav.navigate(Routes.Repos) {
                     popUpTo(Routes.Login) { inclusive = true }
                 }
             }
@@ -88,7 +97,7 @@ fun RedlineApp() {
         Box(modifier = Modifier.fillMaxSize().background(RedlineColors.Bg)) {
             NavHost(
                 navController = nav,
-                startDestination = if (token.isNullOrBlank()) Routes.Login else Routes.PRList,
+                startDestination = if (token.isNullOrBlank()) Routes.Login else Routes.Repos,
             ) {
                 composable(Routes.Login) {
                     LoginScreen(
@@ -99,49 +108,75 @@ fun RedlineApp() {
                     )
                 }
 
-                composable(Routes.PRList) {
-                    PRListScreen(
-                        repoIdx = repoIdx,
-                        onSelectRepo = { repoIdx = it },
-                        onOpenPR = { pr -> nav.navigate(Routes.files(pr.id)) },
+                composable(Routes.Repos) {
+                    LaunchedEffect(Unit) { vm.ensureReposLoaded() }
+                    RepoPickerScreen(
+                        viewer = viewer,
+                        repos = repos,
+                        onPickRepo = { r ->
+                            vm.setActiveRepo(r)
+                            nav.navigate(Routes.PRList)
+                        },
+                        onSignOut = { vm.signOut() },
+                        onRetry = { vm.ensureReposLoaded(force = true) },
                     )
                 }
 
-                composable(
-                    Routes.Files,
-                    arguments = listOf(navArgument("prId") { type = NavType.IntType }),
-                ) { entry ->
-                    val prId = entry.arguments?.getInt("prId") ?: return@composable
-                    val pr = SampleData.PRs.firstOrNull { it.id == prId } ?: return@composable
-                    FileBrowserScreen(
-                        pr = pr,
-                        onOpenFile = { _, idx -> nav.navigate(Routes.diff(prId, idx)) },
-                        onBack = { nav.popBackStack() },
-                        onReview = { reviewPrId = prId; reviewOpen = true },
-                    )
+                composable(Routes.PRList) {
+                    val repo = activeRepo
+                    if (repo == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack(Routes.Repos, inclusive = false) }
+                    } else {
+                        PRListScreen(
+                            repo = repo,
+                            pulls = pulls,
+                            onBack = { nav.popBackStack() },
+                            onOpenPR = { pull ->
+                                vm.setActivePull(pull)
+                                nav.navigate(Routes.Files)
+                            },
+                            onRetry = { vm.ensurePullsLoaded(repo, force = true) },
+                        )
+                    }
+                }
+
+                composable(Routes.Files) {
+                    val pull = activePull
+                    if (pull == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    } else {
+                        FileBrowserScreen(
+                            pr = pull.toSamplePR(),
+                            onOpenFile = { _, idx -> nav.navigate(Routes.diff(idx)) },
+                            onBack = { nav.popBackStack() },
+                            onReview = { reviewOpen = true },
+                        )
+                    }
                 }
 
                 composable(
                     Routes.Diff,
-                    arguments = listOf(
-                        navArgument("prId") { type = NavType.IntType },
-                        navArgument("fileIdx") { type = NavType.IntType },
-                    ),
+                    arguments = listOf(navArgument("fileIdx") { type = NavType.IntType }),
                 ) { entry ->
-                    val prId = entry.arguments?.getInt("prId") ?: return@composable
-                    val pr = SampleData.PRs.firstOrNull { it.id == prId } ?: return@composable
-                    var fileIdx by remember(prId) { mutableIntStateOf(entry.arguments?.getInt("fileIdx") ?: 0) }
-                    DiffViewScreen(
-                        pr = pr,
-                        fileIdx = fileIdx,
-                        setFileIdx = { fileIdx = it },
-                        onBack = { nav.popBackStack() },
-                        onCommentLine = { req ->
-                            composer = ComposerContext(req.side, req.line, req.text, req.fileShort)
-                        },
-                        onReview = { reviewPrId = prId; reviewOpen = true },
-                        pendingComments = pending,
-                    )
+                    val pull = activePull
+                    if (pull == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    } else {
+                        var fileIdx by remember(pull.number) {
+                            mutableIntStateOf(entry.arguments?.getInt("fileIdx") ?: 0)
+                        }
+                        DiffViewScreen(
+                            pr = pull.toSamplePR(),
+                            fileIdx = fileIdx,
+                            setFileIdx = { fileIdx = it },
+                            onBack = { nav.popBackStack() },
+                            onCommentLine = { req ->
+                                composer = ComposerContext(req.side, req.line, req.text, req.fileShort)
+                            },
+                            onReview = { reviewOpen = true },
+                            pendingComments = pending,
+                        )
+                    }
                 }
             }
 
@@ -157,17 +192,14 @@ fun RedlineApp() {
                                 "Comment added · review started"
                             else "Comment added to review"
                         )
-                        if (submit.kind == ComposerKind.StartReview) {
-                            reviewPrId = SampleData.PRs.firstOrNull { it.id != 0 }?.id ?: 0
-                            reviewOpen = true
-                        }
+                        if (submit.kind == ComposerKind.StartReview) reviewOpen = true
                     },
                 )
             }
 
             if (reviewOpen) {
                 ReviewSheet(
-                    prId = reviewPrId,
+                    prId = activePull?.number ?: 0,
                     pendingCount = pending.size,
                     onCancel = { reviewOpen = false },
                     onSubmit = { sub ->
@@ -207,4 +239,37 @@ fun RedlineApp() {
             }
         }
     }
+}
+
+/**
+ * Wrap a real GhPull in the sample-data PR struct so the existing
+ * FileBrowserScreen / DiffViewScreen can render its header. The file
+ * list, checks, diffs and inline comments below the header still
+ * come from SampleData — those screens haven't been ported to live
+ * GitHub data yet.
+ */
+private fun GhPull.toSamplePR(): PR {
+    val palette = listOf(
+        0xFFF97316, 0xFF22D3EE, 0xFF3B82F6, 0xFFA855F7, 0xFFEC4899,
+        0xFF14B8A6, 0xFFFBBF24, 0xFFEF4444, 0xFF8B5CF6, 0xFF10B981,
+    )
+    val login = user?.login.orEmpty()
+    val avatar = Color(palette[(login.hashCode().toUInt().toInt() and 0x7FFFFFFF) % palette.size])
+    val sampleStats = SampleData.PRs.first()
+    return PR(
+        id = number,
+        repo = "live",
+        title = title,
+        author = login.ifEmpty { "?" },
+        avatar = avatar,
+        branch = head.ref,
+        base = base.ref,
+        files = changed_files ?: sampleStats.files,
+        additions = additions ?: sampleStats.additions,
+        deletions = deletions ?: sampleStats.deletions,
+        opened = timeAgo(updated_at),
+        draft = draft,
+        checks = CheckSummary.Pass,
+        comments = comments + review_comments,
+    )
 }
