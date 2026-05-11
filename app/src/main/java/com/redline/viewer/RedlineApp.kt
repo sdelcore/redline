@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.redline.viewer.data.SampleData
@@ -54,6 +55,7 @@ private object Routes {
 fun RedlineApp() {
     val vm: AppViewModel = viewModel()
     val token by vm.token.collectAsState()
+    val authState by vm.authState.collectAsState()
     val pending by vm.pending.collectAsState()
     val toast by vm.toast.collectAsState()
 
@@ -63,6 +65,24 @@ fun RedlineApp() {
     var reviewPrId by remember { mutableIntStateOf(0) }
 
     val nav = rememberNavController()
+    val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+
+    // Single source of truth: drive navigation off token state.
+    LaunchedEffect(token) {
+        val authed = !token.isNullOrBlank()
+        when {
+            authed && currentRoute == Routes.Login -> {
+                nav.navigate(Routes.PRList) {
+                    popUpTo(Routes.Login) { inclusive = true }
+                }
+            }
+            !authed && currentRoute != Routes.Login -> {
+                nav.navigate(Routes.Login) {
+                    popUpTo(0) { inclusive = true }
+                }
+            }
+        }
+    }
 
     RedlineTheme {
         Box(modifier = Modifier.fillMaxSize().background(RedlineColors.Bg)) {
@@ -71,12 +91,12 @@ fun RedlineApp() {
                 startDestination = if (token.isNullOrBlank()) Routes.Login else Routes.PRList,
             ) {
                 composable(Routes.Login) {
-                    LoginScreen(onAuthenticated = { t ->
-                        vm.setToken(t)
-                        nav.navigate(Routes.PRList) {
-                            popUpTo(Routes.Login) { inclusive = true }
-                        }
-                    })
+                    LoginScreen(
+                        state = authState,
+                        hasClientId = vm.hasClientId,
+                        onStart = { vm.startDeviceFlow() },
+                        onCancel = { vm.cancelDeviceFlow() },
+                    )
                 }
 
                 composable(Routes.PRList) {
@@ -125,7 +145,6 @@ fun RedlineApp() {
                 }
             }
 
-            // Composer bottom sheet
             composer?.let { ctx ->
                 CommentComposer(
                     context = ctx,
@@ -146,7 +165,6 @@ fun RedlineApp() {
                 )
             }
 
-            // Review bottom sheet
             if (reviewOpen) {
                 ReviewSheet(
                     prId = reviewPrId,
@@ -165,7 +183,6 @@ fun RedlineApp() {
                 )
             }
 
-            // Toast
             toast?.let { msg ->
                 LaunchedEffect(msg) {
                     delay(2200)
