@@ -11,6 +11,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import java.io.IOException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -82,12 +83,19 @@ class DeviceAuth(private val clientId: String) {
             delay(interval * 1000L)
             onTick(interval)
 
-            val resp = http.post("https://github.com/login/oauth/access_token") {
-                accept(ContentType.Application.Json)
-                contentType(ContentType.Application.FormUrlEncoded)
-                parameter("client_id", clientId)
-                parameter("device_code", code.device_code)
-                parameter("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+            // The user may be in another app (e.g. Chrome) while we poll. Treat
+            // transient network failures as "still pending" and try again on the
+            // next interval rather than aborting the whole flow.
+            val resp = try {
+                http.post("https://github.com/login/oauth/access_token") {
+                    accept(ContentType.Application.Json)
+                    contentType(ContentType.Application.FormUrlEncoded)
+                    parameter("client_id", clientId)
+                    parameter("device_code", code.device_code)
+                    parameter("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+                }
+            } catch (e: IOException) {
+                continue
             }
 
             if (resp.status != HttpStatusCode.OK) {
