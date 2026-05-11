@@ -2,19 +2,12 @@ package com.redline.viewer.ui.diff
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -35,14 +27,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,25 +41,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.redline.viewer.Loadable
+import com.redline.viewer.PullDetailBundle
 import com.redline.viewer.data.ChangedFile
 import com.redline.viewer.data.CommentSide
-import com.redline.viewer.data.DiffRow
-import com.redline.viewer.data.DiffRowType
 import com.redline.viewer.data.FileStatus
-import com.redline.viewer.data.PR
 import com.redline.viewer.data.PendingComment
-import com.redline.viewer.data.SampleData
+import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 data class CommentRequest(
     val side: CommentSide,
@@ -81,139 +65,48 @@ data class CommentRequest(
 
 @Composable
 fun DiffViewScreen(
-    pr: PR,
+    pull: GhPull,
+    detail: Loadable<PullDetailBundle>,
     fileIdx: Int,
     setFileIdx: (Int) -> Unit,
     onBack: () -> Unit,
     onCommentLine: (CommentRequest) -> Unit,
     onReview: () -> Unit,
     pendingComments: List<PendingComment>,
+    onRetry: () -> Unit,
 ) {
-    val files = SampleData.Files
-    val file = files[fileIdx]
-    val diff = SampleData.Diffs[file.short] ?: emptyList()
-    val threads = SampleData.Comments[file.short].orEmpty()
-    val pending = pendingComments.filter { it.fileShort == file.short }
-
-    // Shared scroll state across all three panes
-    val vScroll = rememberScrollState()
-    val hScroll = rememberScrollState()
-    var scale by remember { mutableFloatStateOf(1f) }
-
-    val pagerState = rememberPagerState(initialPage = 1) { 3 }
-    val scope = rememberCoroutineScope()
-
-    // Split ratio for split mode (top pane fraction)
-    var splitFraction by remember { mutableFloatStateOf(0.5f) }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(RedlineColors.Bg)
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-        DiffHeader(pr = pr, file = file, onBack = onBack)
-        FileTabs(files = files, fileIdx = fileIdx, setFileIdx = setFileIdx)
-        ModeIndicator(
-            mode = pagerState.currentPage,
-            onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
-        )
-
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            HorizontalPager(
-                state = pagerState,
-                beyondViewportPageCount = 2,
-                modifier = Modifier.fillMaxSize(),
-            ) { page ->
-                when (page) {
-                    0 -> CodePane(
-                        side = CommentSide.Old,
-                        diff = diff,
-                        threads = threads,
-                        pending = pending,
-                        fileShort = file.short,
-                        scale = scale,
-                        vScroll = vScroll,
-                        hScroll = hScroll,
-                        onScaleChange = { scale = it },
-                        onCommentLine = onCommentLine,
-                        label = "old",
-                        sublabel = "── ${pr.base}",
-                    )
-                    1 -> SplitPane(
-                        diff = diff,
-                        threads = threads,
-                        pending = pending,
-                        fileShort = file.short,
-                        scale = scale,
-                        vScroll = vScroll,
-                        hScroll = hScroll,
-                        splitFraction = splitFraction,
-                        onSplitChange = { splitFraction = it.coerceIn(0.15f, 0.85f) },
-                        onScaleChange = { scale = it },
-                        onCommentLine = onCommentLine,
-                        oldSublabel = "── ${pr.base}",
-                        newSublabel = "── ${pr.branch}",
-                    )
-                    2 -> CodePane(
-                        side = CommentSide.New,
-                        diff = diff,
-                        threads = threads,
-                        pending = pending,
-                        fileShort = file.short,
-                        scale = scale,
-                        vScroll = vScroll,
-                        hScroll = hScroll,
-                        onScaleChange = { scale = it },
-                        onCommentLine = onCommentLine,
-                        label = "new",
-                        sublabel = "── ${pr.branch}",
-                    )
-                }
+        when (detail) {
+            Loadable.Idle, Loadable.Loading -> {
+                MinimalHeader(pull = pull, onBack = onBack, subtitle = "loading…")
+                Center("loading diff…")
             }
-
-            // Floating REVIEW pill
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 12.dp, bottom = 16.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(RedlineColors.Accent)
-                    .clickable(onClick = onReview)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(modifier = Modifier.size(13.dp).drawBehind {
-                    val p = Path().apply {
-                        moveTo(size.width * 0.15f, size.height * 0.5f)
-                        lineTo(size.width * 0.4f, size.height * 0.75f)
-                        lineTo(size.width * 0.9f, size.height * 0.25f)
-                    }
-                    drawPath(p, Color.White, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-                })
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "REVIEW",
-                    fontFamily = JetBrainsMono,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = Color.White,
-                )
-                if (pending.isNotEmpty()) {
-                    Spacer(Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.Black.copy(alpha = 0.3f))
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
-                    ) {
-                        Text(
-                            pending.size.toString(),
-                            fontFamily = JetBrainsMono,
-                            fontSize = 10.sp,
-                            color = Color.White,
-                        )
-                    }
+            is Loadable.Err -> {
+                MinimalHeader(pull = pull, onBack = onBack, subtitle = "error")
+                ErrorBlock(detail.message, onRetry)
+            }
+            is Loadable.Ok -> {
+                val bundle = detail.value
+                if (bundle.files.isEmpty()) {
+                    MinimalHeader(pull = pull, onBack = onBack, subtitle = "no files")
+                    Center("this pull request has no files")
+                } else {
+                    val safeIdx = fileIdx.coerceIn(0, bundle.files.lastIndex)
+                    Loaded(
+                        pull = pull,
+                        bundle = bundle,
+                        fileIdx = safeIdx,
+                        setFileIdx = setFileIdx,
+                        onBack = onBack,
+                        onCommentLine = onCommentLine,
+                        onReview = onReview,
+                        pendingComments = pendingComments,
+                    )
                 }
             }
         }
@@ -221,30 +114,149 @@ fun DiffViewScreen(
 }
 
 @Composable
-private fun DiffHeader(pr: PR, file: ChangedFile, onBack: () -> Unit) {
+private fun Loaded(
+    pull: GhPull,
+    bundle: PullDetailBundle,
+    fileIdx: Int,
+    setFileIdx: (Int) -> Unit,
+    onBack: () -> Unit,
+    onCommentLine: (CommentRequest) -> Unit,
+    onReview: () -> Unit,
+    pendingComments: List<PendingComment>,
+) {
+    val file = bundle.files[fileIdx]
+    val diff = bundle.diffs[file.short].orEmpty()
+    val threads = bundle.commentsByPath[file.short].orEmpty()
+    val pending = pendingComments.filter { it.fileShort == file.short }
+
+    val vScroll = rememberScrollState()
+    val hScroll = rememberScrollState()
+    var scale by remember { mutableFloatStateOf(1f) }
+
+    val pagerState = rememberPagerState(initialPage = 1) { 3 }
+    val scope = rememberCoroutineScope()
+
+    var splitFraction by remember { mutableFloatStateOf(0.5f) }
+
+    DiffHeader(pull = pull, file = file, onBack = onBack)
+    FileTabs(files = bundle.files, fileIdx = fileIdx, setFileIdx = setFileIdx)
+    ModeIndicator(
+        mode = pagerState.currentPage,
+        onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
+    )
+
+    Box(modifier = Modifier.fillMaxWidth().fillMaxSize()) {
+        HorizontalPager(
+            state = pagerState,
+            beyondViewportPageCount = 2,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            when (page) {
+                0 -> CodePane(
+                    side = CommentSide.Old,
+                    diff = diff,
+                    threads = threads,
+                    pending = pending,
+                    fileShort = file.short,
+                    scale = scale,
+                    vScroll = vScroll,
+                    hScroll = hScroll,
+                    onScaleChange = { scale = it },
+                    onCommentLine = onCommentLine,
+                    label = "old",
+                    sublabel = "── ${pull.base.ref}",
+                )
+                1 -> SplitPane(
+                    diff = diff,
+                    threads = threads,
+                    pending = pending,
+                    fileShort = file.short,
+                    scale = scale,
+                    vScroll = vScroll,
+                    hScroll = hScroll,
+                    splitFraction = splitFraction,
+                    onSplitChange = { splitFraction = it.coerceIn(0.15f, 0.85f) },
+                    onScaleChange = { scale = it },
+                    onCommentLine = onCommentLine,
+                    oldSublabel = "── ${pull.base.ref}",
+                    newSublabel = "── ${pull.head.ref}",
+                )
+                2 -> CodePane(
+                    side = CommentSide.New,
+                    diff = diff,
+                    threads = threads,
+                    pending = pending,
+                    fileShort = file.short,
+                    scale = scale,
+                    vScroll = vScroll,
+                    hScroll = hScroll,
+                    onScaleChange = { scale = it },
+                    onCommentLine = onCommentLine,
+                    label = "new",
+                    sublabel = "── ${pull.head.ref}",
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 16.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(RedlineColors.Accent)
+                .clickable(onClick = onReview)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(modifier = Modifier.size(13.dp).drawBehind {
+                val p = Path().apply {
+                    moveTo(size.width * 0.15f, size.height * 0.5f)
+                    lineTo(size.width * 0.4f, size.height * 0.75f)
+                    lineTo(size.width * 0.9f, size.height * 0.25f)
+                }
+                drawPath(p, Color.White, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+            })
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "REVIEW",
+                fontFamily = JetBrainsMono,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = Color.White,
+            )
+            if (pending.isNotEmpty()) {
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.3f))
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                ) {
+                    Text(
+                        pending.size.toString(),
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = Color.White,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffHeader(pull: GhPull, file: ChangedFile, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clickable(onClick = onBack)
-                .drawBehind {
-                    val p = Path().apply {
-                        moveTo(size.width * 0.6f, size.height * 0.3f)
-                        lineTo(size.width * 0.35f, size.height * 0.5f)
-                        lineTo(size.width * 0.6f, size.height * 0.7f)
-                    }
-                    drawPath(p, RedlineColors.Text, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
-                },
-        )
+        BackBox(onBack)
         Column(modifier = Modifier.weight(1f)) {
             Row {
                 Text(
-                    "#${pr.id}",
+                    "#${pull.number}",
                     fontFamily = JetBrainsMono,
                     fontSize = 10.sp,
                     color = RedlineColors.TextMute,
@@ -272,6 +284,52 @@ private fun DiffHeader(pr: PR, file: ChangedFile, onBack: () -> Unit) {
         }
     }
     HDivider()
+}
+
+@Composable
+private fun MinimalHeader(pull: GhPull, onBack: () -> Unit, subtitle: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BackBox(onBack)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "#${pull.number}",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                color = RedlineColors.TextMute,
+            )
+            Text(
+                subtitle,
+                fontFamily = JetBrainsMono,
+                fontSize = 13.sp,
+                color = RedlineColors.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    HDivider()
+}
+
+@Composable
+private fun BackBox(onBack: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clickable(onClick = onBack)
+            .drawBehind {
+                val p = Path().apply {
+                    moveTo(size.width * 0.6f, size.height * 0.3f)
+                    lineTo(size.width * 0.35f, size.height * 0.5f)
+                    lineTo(size.width * 0.6f, size.height * 0.7f)
+                }
+                drawPath(p, RedlineColors.Text, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
+            },
+    )
 }
 
 @Composable
@@ -379,4 +437,35 @@ private fun HDivider() {
             .height(1.dp)
             .background(RedlineColors.BorderSoft)
     )
+}
+
+@Composable
+private fun Center(text: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextMute)
+    }
+}
+
+@Composable
+private fun ErrorBlock(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(message, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.Accent)
+        Spacer(Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(RedlineColors.Surface2)
+                .clickable(onClick = onRetry)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Text("retry", fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextDim)
+        }
+    }
 }

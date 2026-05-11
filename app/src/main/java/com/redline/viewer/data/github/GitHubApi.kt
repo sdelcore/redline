@@ -61,5 +61,20 @@ class GitHubApi(token: String) {
     suspend fun pull(owner: String, name: String, number: Int): GhPull =
         http.get("repos/$owner/$name/pulls/$number").body()
 
+    suspend fun pullFiles(owner: String, name: String, number: Int, perPage: Int = 100): List<GhFile> =
+        http.get("repos/$owner/$name/pulls/$number/files") {
+            parameter("per_page", perPage)
+        }.body()
+
+    suspend fun checkRuns(owner: String, name: String, ref: String): GhCheckRunsResponse =
+        http.get("repos/$owner/$name/commits/$ref/check-runs") {
+            parameter("per_page", 100)
+        }.body()
+
+    suspend fun reviewComments(owner: String, name: String, number: Int): List<GhReviewComment> =
+        http.get("repos/$owner/$name/pulls/$number/comments") {
+            parameter("per_page", 100)
+        }.body()
+
     fun close() = http.close()
 }

@@ -17,7 +17,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -28,11 +27,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.redline.viewer.data.CheckSummary
-import com.redline.viewer.data.PR
-import com.redline.viewer.data.SampleData
-import com.redline.viewer.data.github.GhPull
-import com.redline.viewer.data.timeAgo
 import com.redline.viewer.ui.diff.DiffViewScreen
 import com.redline.viewer.ui.files.FileBrowserScreen
 import com.redline.viewer.ui.login.LoginScreen
@@ -67,6 +61,7 @@ fun RedlineApp() {
     val pulls by vm.pulls.collectAsState()
     val activeRepo by vm.activeRepo.collectAsState()
     val activePull by vm.activePull.collectAsState()
+    val detail by vm.detail.collectAsState()
     val pending by vm.pending.collectAsState()
     val toast by vm.toast.collectAsState()
 
@@ -76,7 +71,6 @@ fun RedlineApp() {
     val nav = rememberNavController()
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
 
-    // Login ↔ everything-else routing follows token state.
     LaunchedEffect(token) {
         val authed = !token.isNullOrBlank()
         when {
@@ -146,10 +140,12 @@ fun RedlineApp() {
                         LaunchedEffect(Unit) { nav.popBackStack() }
                     } else {
                         FileBrowserScreen(
-                            pr = pull.toSamplePR(),
+                            pull = pull,
+                            detail = detail,
                             onOpenFile = { _, idx -> nav.navigate(Routes.diff(idx)) },
                             onBack = { nav.popBackStack() },
                             onReview = { reviewOpen = true },
+                            onRetry = { vm.loadDetail(force = true) },
                         )
                     }
                 }
@@ -166,7 +162,8 @@ fun RedlineApp() {
                             mutableIntStateOf(entry.arguments?.getInt("fileIdx") ?: 0)
                         }
                         DiffViewScreen(
-                            pr = pull.toSamplePR(),
+                            pull = pull,
+                            detail = detail,
                             fileIdx = fileIdx,
                             setFileIdx = { fileIdx = it },
                             onBack = { nav.popBackStack() },
@@ -175,6 +172,7 @@ fun RedlineApp() {
                             },
                             onReview = { reviewOpen = true },
                             pendingComments = pending,
+                            onRetry = { vm.loadDetail(force = true) },
                         )
                     }
                 }
@@ -239,37 +237,4 @@ fun RedlineApp() {
             }
         }
     }
-}
-
-/**
- * Wrap a real GhPull in the sample-data PR struct so the existing
- * FileBrowserScreen / DiffViewScreen can render its header. The file
- * list, checks, diffs and inline comments below the header still
- * come from SampleData — those screens haven't been ported to live
- * GitHub data yet.
- */
-private fun GhPull.toSamplePR(): PR {
-    val palette = listOf(
-        0xFFF97316, 0xFF22D3EE, 0xFF3B82F6, 0xFFA855F7, 0xFFEC4899,
-        0xFF14B8A6, 0xFFFBBF24, 0xFFEF4444, 0xFF8B5CF6, 0xFF10B981,
-    )
-    val login = user?.login.orEmpty()
-    val avatar = Color(palette[(login.hashCode().toUInt().toInt() and 0x7FFFFFFF) % palette.size])
-    val sampleStats = SampleData.PRs.first()
-    return PR(
-        id = number,
-        repo = "live",
-        title = title,
-        author = login.ifEmpty { "?" },
-        avatar = avatar,
-        branch = head.ref,
-        base = base.ref,
-        files = changed_files ?: sampleStats.files,
-        additions = additions ?: sampleStats.additions,
-        deletions = deletions ?: sampleStats.deletions,
-        opened = timeAgo(updated_at),
-        draft = draft,
-        checks = CheckSummary.Pass,
-        comments = comments + review_comments,
-    )
 }
