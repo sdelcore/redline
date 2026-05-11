@@ -42,28 +42,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.redline.viewer.Loadable
+import com.redline.viewer.PullDetailBundle
 import com.redline.viewer.data.ChangedFile
 import com.redline.viewer.data.Check
 import com.redline.viewer.data.CheckSummary
 import com.redline.viewer.data.FileStatus
-import com.redline.viewer.data.PR
-import com.redline.viewer.data.SampleData
+import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.ui.components.CheckIcon
-import com.redline.viewer.ui.components.colorForStatus
 import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
 
 @Composable
 fun FileBrowserScreen(
-    pr: PR,
+    pull: GhPull,
+    detail: Loadable<PullDetailBundle>,
     onOpenFile: (ChangedFile, Int) -> Unit,
     onBack: () -> Unit,
     onReview: () -> Unit,
+    onRetry: () -> Unit,
 ) {
-    val files = SampleData.Files
-    val comments = SampleData.Comments
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -71,31 +70,19 @@ fun FileBrowserScreen(
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Header(pr = pr, onBack = onBack)
+            Header(pull = pull, onBack = onBack)
 
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 80.dp),
-            ) {
-                item { MergeBlock(pr = pr, onReview = onReview) }
-                item { ChecksBlock(prId = pr.id) }
-                item {
-                    SummaryBar(
-                        fileCount = files.size,
-                        additions = pr.additions,
-                        deletions = pr.deletions,
-                    )
-                }
-                items(files.withIndex().toList(), key = { it.value.path }) { (idx, file) ->
-                    val threadCount = comments[file.short]
-                        ?.sumOf { it.comments.size }
-                        ?: 0
-                    FileRow(file = file, threadCount = threadCount, onClick = { onOpenFile(file, idx) })
-                }
+            when (detail) {
+                Loadable.Idle, Loadable.Loading -> CenterStatus("loading pull request…")
+                is Loadable.Err -> ErrorStatus(detail.message, onRetry)
+                is Loadable.Ok -> Body(
+                    bundle = detail.value,
+                    onOpenFile = onOpenFile,
+                    onReview = onReview,
+                )
             }
         }
 
-        // FAB: start review
         Row(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -127,7 +114,37 @@ fun FileBrowserScreen(
 }
 
 @Composable
-private fun Header(pr: PR, onBack: () -> Unit) {
+private fun Body(
+    bundle: PullDetailBundle,
+    onOpenFile: (ChangedFile, Int) -> Unit,
+    onReview: () -> Unit,
+) {
+    val pr = bundle.pull
+    val additions = pr.additions ?: bundle.files.sumOf { it.additions }
+    val deletions = pr.deletions ?: bundle.files.sumOf { it.deletions }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 80.dp),
+    ) {
+        item { MergeBlock(checks = bundle.checks, onReview = onReview) }
+        item { ChecksBlock(checks = bundle.checks) }
+        item {
+            SummaryBar(
+                fileCount = bundle.files.size,
+                additions = additions,
+                deletions = deletions,
+            )
+        }
+        items(bundle.files.withIndex().toList(), key = { it.value.path }) { (idx, file) ->
+            val threadCount = bundle.commentsByPath[file.short]?.sumOf { it.comments.size } ?: 0
+            FileRow(file = file, threadCount = threadCount, onClick = { onOpenFile(file, idx) })
+        }
+    }
+}
+
+@Composable
+private fun Header(pull: GhPull, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -137,13 +154,13 @@ private fun Header(pr: PR, onBack: () -> Unit) {
         BackIcon(onBack = onBack)
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "#${pr.id} · ${pr.author}",
+                "#${pull.number} · ${pull.user?.login ?: "?"}",
                 fontFamily = JetBrainsMono,
                 fontSize = 11.sp,
                 color = RedlineColors.TextMute,
             )
             Text(
-                pr.title,
+                pull.title,
                 fontFamily = Inter,
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp,
@@ -184,8 +201,7 @@ private fun Divider() {
 }
 
 @Composable
-private fun MergeBlock(pr: PR, onReview: () -> Unit) {
-    val checks = SampleData.Checks[pr.id].orEmpty()
+private fun MergeBlock(checks: List<Check>, onReview: () -> Unit) {
     val counts = checks.groupingBy { it.status }.eachCount()
     val canMerge = (counts[CheckSummary.Fail] ?: 0) == 0 && (counts[CheckSummary.Pending] ?: 0) == 0
     val statusColor = if (canMerge) RedlineColors.Green else RedlineColors.Yellow
@@ -213,18 +229,32 @@ private fun MergeBlock(pr: PR, onReview: () -> Unit) {
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (canMerge) "ready to merge" else "waiting on checks",
+                    when {
+                        checks.isEmpty() -> "no required checks"
+                        canMerge -> "ready to merge"
+                        else -> "waiting on checks"
+                    },
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 11.sp,
                     color = statusColor,
                 )
-                Text(
-                    "2 approvals · no conflicts",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 10.sp,
-                    color = RedlineColors.TextMute,
-                )
+                if (checks.isNotEmpty()) {
+                    val pass = counts[CheckSummary.Pass] ?: 0
+                    val fail = counts[CheckSummary.Fail] ?: 0
+                    val pending = counts[CheckSummary.Pending] ?: 0
+                    val parts = buildList {
+                        if (pass > 0) add("$pass passing")
+                        if (fail > 0) add("$fail failing")
+                        if (pending > 0) add("$pending running")
+                    }
+                    Text(
+                        parts.joinToString(" · "),
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = RedlineColors.TextMute,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -243,7 +273,7 @@ private fun MergeBlock(pr: PR, onReview: () -> Unit) {
                 border = if (canMerge) RedlineColors.Green else RedlineColors.Border,
                 contentColor = if (canMerge) RedlineColors.Bg else RedlineColors.TextMute,
                 modifier = Modifier.weight(1f),
-                onClick = { /* mocked */ },
+                onClick = { /* not wired yet */ },
                 enabled = canMerge,
             )
         }
@@ -281,8 +311,9 @@ private fun ActionButton(
 }
 
 @Composable
-private fun ChecksBlock(prId: Int) {
-    val checks = SampleData.Checks[prId].orEmpty()
+private fun ChecksBlock(checks: List<Check>) {
+    if (checks.isEmpty()) return
+
     var expanded by remember { mutableStateOf(false) }
     val counts = checks.groupingBy { it.status }.eachCount()
     val fail = counts[CheckSummary.Fail] ?: 0
@@ -457,22 +488,6 @@ private fun CheckRow(check: Check) {
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color.Transparent)
-                    .border(1.dp, RedlineColors.Border, RoundedCornerShape(3.dp))
-                    .clickable { /* mock */ }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    "logs",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 10.sp,
-                    color = RedlineColors.TextDim,
-                )
-            }
         }
         Divider()
     }
@@ -493,16 +508,6 @@ private fun SummaryBar(fileCount: Int, additions: Int, deletions: Int) {
         Text("+$additions", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.Green)
         Spacer(Modifier.width(12.dp))
         Text("−$deletions", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.Accent)
-        Spacer(Modifier.weight(1f))
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(RedlineColors.Surface2)
-                .border(1.dp, RedlineColors.Border, RoundedCornerShape(4.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        ) {
-            Text("tree", fontFamily = JetBrainsMono, fontSize = 10.sp, color = RedlineColors.TextDim)
-        }
     }
     Divider()
 }
@@ -613,4 +618,36 @@ private fun FileRow(file: ChangedFile, threadCount: Int, onClick: () -> Unit) {
         }
     }
     Divider()
+}
+
+@Composable
+private fun CenterStatus(text: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextMute)
+    }
+}
+
+@Composable
+private fun ErrorStatus(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(40.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(message, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.Accent)
+        Spacer(Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(RedlineColors.Surface2)
+                .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
+                .clickable(onClick = onRetry)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Text("retry", fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextDim)
+        }
+    }
 }

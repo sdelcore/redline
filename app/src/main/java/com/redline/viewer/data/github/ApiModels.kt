@@ -38,7 +38,10 @@ data class GhPullUser(
 )
 
 @Serializable
-data class GhPullRef(val ref: String)
+data class GhPullRef(
+    val ref: String,
+    val sha: String = "",
+)
 
 @Serializable
 data class GhPull(
@@ -56,4 +59,62 @@ data class GhPull(
     val additions: Int? = null,
     val deletions: Int? = null,
     val changed_files: Int? = null,
+    val mergeable: Boolean? = null,
+    val mergeable_state: String? = null,
+)
+
+@Serializable
+data class GhFile(
+    val sha: String? = null,
+    val filename: String,
+    val status: String,
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val changes: Int = 0,
+    val blob_url: String? = null,
+    val raw_url: String? = null,
+    val contents_url: String? = null,
+    val patch: String? = null,
+    val previous_filename: String? = null,
+)
+
+@Serializable
+data class GhCheckRunApp(
+    val id: Long = 0,
+    val name: String = "",
+    val slug: String = "",
+)
+
+@Serializable
+data class GhCheckRun(
+    val id: Long,
+    val name: String,
+    val status: String,
+    val conclusion: String? = null,
+    val started_at: String? = null,
+    val completed_at: String? = null,
+    val details_url: String? = null,
+    val head_sha: String = "",
+    val app: GhCheckRunApp? = null,
+)
+
+@Serializable
+data class GhCheckRunsResponse(
+    val total_count: Int = 0,
+    val check_runs: List<GhCheckRun> = emptyList(),
+)
+
+@Serializable
+data class GhReviewComment(
+    val id: Long,
+    val path: String,
+    val line: Int? = null,
+    val original_line: Int? = null,
+    val side: String? = null, // "LEFT" (deletion) | "RIGHT" (addition/context)
+    val in_reply_to_id: Long? = null,
+    val body: String,
+    val user: GhPullUser? = null,
+    val created_at: String,
+    val updated_at: String,
+    val diff_hunk: String? = null,
 )

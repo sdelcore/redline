@@ -2,25 +2,6 @@ package com.redline.viewer.data
 
 import androidx.compose.ui.graphics.Color
 
-data class Repo(val id: String, val owner: String, val name: String, val stars: String)
-
-data class PR(
-    val id: Int,
-    val repo: String,
-    val title: String,
-    val author: String,
-    val avatar: Color,
-    val branch: String,
-    val base: String,
-    val files: Int,
-    val additions: Int,
-    val deletions: Int,
-    val opened: String,
-    val draft: Boolean,
-    val checks: CheckSummary,
-    val comments: Int,
-)
-
 enum class CheckSummary { Pass, Fail, Pending }
 
 enum class FileStatus { Added, Modified, Deleted }
