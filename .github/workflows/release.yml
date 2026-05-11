@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          ver="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        run: |
+          echo "GITHUB_CLIENT_ID=${{ vars.GITHUB_CLIENT_ID }}" > local.properties
+
+      - name: Build APK
+        run: nix develop --command ./gradlew --no-daemon assembleRelease
+
+      - name: Stage artifact
+        id: stage
+        run: |
+          src="app/build/outputs/apk/release/app-release.apk"
+          out="redline-${{ steps.ver.outputs.ver }}.apk"
+          cp "$src" "$out"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: redline ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: ${{ steps.stage.outputs.path }}
