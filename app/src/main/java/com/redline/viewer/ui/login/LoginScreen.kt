@@ -2,7 +2,6 @@ package com.redline.viewer.ui.login
 
 import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,12 +17,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,42 +31,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
-import com.redline.viewer.BuildConfig
-import com.redline.viewer.data.github.DeviceAuth
+import com.redline.viewer.AuthState
 import com.redline.viewer.data.github.DeviceCode
-import com.redline.viewer.data.github.PollResult
 import com.redline.viewer.ui.components.GitHubMark
 import com.redline.viewer.ui.components.RedlineButton
 import com.redline.viewer.ui.components.SubtleOutlinedButton
-import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-
-private sealed class LoginState {
-    object Idle : LoginState()
-    object Requesting : LoginState()
-    data class Verifying(val code: DeviceCode) : LoginState()
-    data class Error(val message: String) : LoginState()
-}
 
 @Composable
-fun LoginScreen(onAuthenticated: (token: String) -> Unit) {
+fun LoginScreen(
+    state: AuthState,
+    hasClientId: Boolean,
+    onStart: () -> Unit,
+    onCancel: () -> Unit,
+) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val clientId = BuildConfig.GITHUB_CLIENT_ID
-
-    var state by remember { mutableStateOf<LoginState>(LoginState.Idle) }
-    val auth = remember { if (clientId.isNotBlank()) DeviceAuth(clientId) else null }
-    var pollJob by remember { mutableStateOf<Job?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            pollJob?.cancel()
-            auth?.close()
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -108,42 +81,19 @@ fun LoginScreen(onAuthenticated: (token: String) -> Unit) {
 
             Spacer(Modifier.weight(1f))
 
-            when (val s = state) {
-                is LoginState.Idle -> IdleBlock(
-                    enabled = auth != null,
-                    onStart = {
-                        if (auth == null) return@IdleBlock
-                        state = LoginState.Requesting
-                        scope.launch {
-                            try {
-                                val code = auth.requestCode()
-                                state = LoginState.Verifying(code)
-                                pollJob = scope.launch {
-                                    when (val r = auth.poll(code)) {
-                                        is PollResult.Success -> onAuthenticated(r.accessToken)
-                                        is PollResult.Error -> state = LoginState.Error(r.message.ifBlank { r.code })
-                                    }
-                                }
-                            } catch (t: Throwable) {
-                                state = LoginState.Error(t.message ?: "request failed")
-                            }
-                        }
-                    },
-                )
-                LoginState.Requesting -> StatusBlock("requesting device code…")
-                is LoginState.Verifying -> VerifyingBlock(
-                    code = s.code,
+            when (state) {
+                AuthState.Idle -> IdleBlock(enabled = hasClientId, onStart = onStart)
+                AuthState.Requesting -> StatusBlock("requesting device code…")
+                is AuthState.Verifying -> VerifyingBlock(
+                    code = state.code,
                     onOpenBrowser = {
-                        val intent = Intent(Intent.ACTION_VIEW, s.code.verification_uri.toUri())
+                        val intent = Intent(Intent.ACTION_VIEW, state.code.verification_uri.toUri())
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         context.startActivity(intent)
                     },
-                    onCancel = {
-                        pollJob?.cancel()
-                        state = LoginState.Idle
-                    },
+                    onCancel = onCancel,
                 )
-                is LoginState.Error -> ErrorBlock(s.message, onRetry = { state = LoginState.Idle })
+                is AuthState.Error -> ErrorBlock(state.message, onRetry = onStart)
             }
 
             Spacer(Modifier.height(20.dp))

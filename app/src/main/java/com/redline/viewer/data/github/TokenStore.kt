@@ -1,31 +1,17 @@
 package com.redline.viewer.data.github
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 
 class TokenStore(context: Context) {
 
-    private val prefs = run {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context,
-            "redline_secure",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    private val prefs = context.applicationContext.getSharedPreferences("redline_auth", Context.MODE_PRIVATE)
 
     var accessToken: String?
         get() = prefs.getString(KEY_TOKEN, null)
         set(value) {
-            prefs.edit().run {
+            prefs.edit().apply {
                 if (value == null) remove(KEY_TOKEN) else putString(KEY_TOKEN, value)
-                apply()
-            }
+            }.apply()
         }
 
     fun clear() {
