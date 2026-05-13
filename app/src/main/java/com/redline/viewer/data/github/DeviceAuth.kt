@@ -17,7 +17,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
-data class DeviceCode(
+internal data class DeviceCode(
     val device_code: String,
     val user_code: String,
     val verification_uri: String,
@@ -39,12 +39,12 @@ private data class TokenError(
     val interval: Int? = null,
 )
 
-sealed class PollResult {
+internal sealed class PollResult {
     data class Success(val accessToken: String) : PollResult()
     data class Error(val code: String, val message: String) : PollResult()
 }
 
-class DeviceAuth(private val clientId: String) {
+internal class DeviceAuth(private val clientId: String) {
 
     private val json = Json {
         ignoreUnknownKeys = true

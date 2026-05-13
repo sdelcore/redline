@@ -42,14 +42,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redline.viewer.Loadable
-import com.redline.viewer.PullDetailBundle
+import com.redline.viewer.data.Loadable
+import com.redline.viewer.data.PullDetailBundle
 import com.redline.viewer.data.ChangedFile
 import com.redline.viewer.data.Check
 import com.redline.viewer.data.CheckSummary
 import com.redline.viewer.data.FileStatus
 import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.ui.components.CheckIcon
+import com.redline.viewer.ui.components.LoadableContent
 import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
@@ -72,14 +73,12 @@ fun FileBrowserScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             Header(pull = pull, onBack = onBack)
 
-            when (detail) {
-                Loadable.Idle, Loadable.Loading -> CenterStatus("loading pull request…")
-                is Loadable.Err -> ErrorStatus(detail.message, onRetry)
-                is Loadable.Ok -> Body(
-                    bundle = detail.value,
-                    onOpenFile = onOpenFile,
-                    onReview = onReview,
-                )
+            LoadableContent(
+                state = detail,
+                onRetry = onRetry,
+                loadingMessage = "loading pull request…",
+            ) { bundle ->
+                Body(bundle = bundle, onOpenFile = onOpenFile, onReview = onReview)
             }
         }
 
@@ -620,34 +619,3 @@ private fun FileRow(file: ChangedFile, threadCount: Int, onClick: () -> Unit) {
     Divider()
 }
 
-@Composable
-private fun CenterStatus(text: String) {
-    Box(
-        modifier = Modifier.fillMaxSize().padding(40.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextMute)
-    }
-}
-
-@Composable
-private fun ErrorStatus(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(40.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(message, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.Accent)
-        Spacer(Modifier.height(12.dp))
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(RedlineColors.Surface2)
-                .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
-                .clickable(onClick = onRetry)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            Text("retry", fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextDim)
-        }
-    }
-}

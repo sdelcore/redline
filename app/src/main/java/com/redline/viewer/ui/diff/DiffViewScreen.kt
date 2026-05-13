@@ -45,8 +45,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redline.viewer.Loadable
-import com.redline.viewer.PullDetailBundle
+import com.redline.viewer.data.Loadable
+import com.redline.viewer.data.PullDetailBundle
 import com.redline.viewer.data.ChangedFile
 import com.redline.viewer.data.CommentSide
 import com.redline.viewer.data.FileStatus

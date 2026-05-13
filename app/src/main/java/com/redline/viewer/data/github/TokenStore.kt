@@ -2,7 +2,7 @@ package com.redline.viewer.data.github
 
 import android.content.Context
 
-class TokenStore(context: Context) {
+internal class TokenStore(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("redline_auth", Context.MODE_PRIVATE)
 

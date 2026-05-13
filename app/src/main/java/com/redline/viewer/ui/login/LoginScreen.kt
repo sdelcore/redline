@@ -41,8 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import kotlinx.coroutines.delay
-import com.redline.viewer.AuthState
-import com.redline.viewer.data.github.DeviceCode
+import com.redline.viewer.data.github.AuthState
 import com.redline.viewer.ui.components.GitHubMark
 import com.redline.viewer.ui.components.RedlineButton
 import com.redline.viewer.ui.components.SubtleOutlinedButton
@@ -95,9 +94,10 @@ fun LoginScreen(
                 AuthState.Idle -> IdleBlock(enabled = hasClientId, onStart = onStart)
                 AuthState.Requesting -> StatusBlock("requesting device code…")
                 is AuthState.Verifying -> VerifyingBlock(
-                    code = state.code,
+                    userCode = state.userCode,
+                    verificationUri = state.verificationUri,
                     onOpenBrowser = {
-                        val intent = Intent(Intent.ACTION_VIEW, state.code.verification_uri.toUri())
+                        val intent = Intent(Intent.ACTION_VIEW, state.verificationUri.toUri())
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         context.startActivity(intent)
                     },
@@ -145,7 +145,12 @@ private fun StatusBlock(text: String) {
 }
 
 @Composable
-private fun VerifyingBlock(code: DeviceCode, onOpenBrowser: () -> Unit, onCancel: () -> Unit) {
+private fun VerifyingBlock(
+    userCode: String,
+    verificationUri: String,
+    onOpenBrowser: () -> Unit,
+    onCancel: () -> Unit,
+) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -153,7 +158,7 @@ private fun VerifyingBlock(code: DeviceCode, onOpenBrowser: () -> Unit, onCancel
     }
 
     val doCopy = {
-        clipboard.setText(AnnotatedString(code.user_code))
+        clipboard.setText(AnnotatedString(userCode))
         copied = true
     }
 
@@ -162,7 +167,7 @@ private fun VerifyingBlock(code: DeviceCode, onOpenBrowser: () -> Unit, onCancel
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "go to ${code.verification_uri}",
+            "go to $verificationUri",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = RedlineColors.TextDim,
@@ -183,7 +188,7 @@ private fun VerifyingBlock(code: DeviceCode, onOpenBrowser: () -> Unit, onCancel
                 .padding(horizontal = 18.dp, vertical = 14.dp),
         ) {
             Text(
-                code.user_code,
+                userCode,
                 fontFamily = JetBrainsMono,
                 fontWeight = FontWeight.Bold,
                 fontSize = 26.sp,
@@ -207,7 +212,7 @@ private fun VerifyingBlock(code: DeviceCode, onOpenBrowser: () -> Unit, onCancel
         }
         Spacer(Modifier.height(12.dp))
         RedlineButton(
-            text = "Open ${code.verification_uri.removePrefix("https://").removePrefix("http://")}",
+            text = "Open ${verificationUri.removePrefix("https://").removePrefix("http://")}",
             onClick = onOpenBrowser,
         )
         Spacer(Modifier.height(8.dp))
