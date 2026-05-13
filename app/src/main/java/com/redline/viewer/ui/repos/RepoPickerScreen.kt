@@ -45,11 +45,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redline.viewer.Loadable
+import com.redline.viewer.data.Loadable
 import com.redline.viewer.data.github.GhRepo
 import com.redline.viewer.data.github.GhUser
 import com.redline.viewer.data.languageColor
 import com.redline.viewer.data.timeAgo
+import com.redline.viewer.ui.components.LoadableContent
 import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
@@ -82,36 +83,33 @@ fun RepoPickerScreen(
             ScopeTabs(scope = scope, viewerLogin = viewerLogin, onSelect = { scope = it })
         }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            when (repos) {
-                Loadable.Idle, Loadable.Loading -> StatusRow("loading repos…")
-                is Loadable.Err -> ErrorRow(repos.message, onRetry)
-                is Loadable.Ok -> {
-                    val filtered = repos.value.filter { r ->
-                        val matches = query.isBlank() || "${r.owner.login}/${r.name}"
-                            .contains(query, ignoreCase = true)
-                        val inScope = when (scope) {
-                            RepoScope.All -> true
-                            RepoScope.Mine -> viewerLogin != null && r.owner.login == viewerLogin
-                        }
-                        matches && inScope
+        LoadableContent(
+            state = repos,
+            onRetry = onRetry,
+            loadingMessage = "loading repos…",
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { list ->
+            val filtered = list.filter { r ->
+                val matches = query.isBlank() || "${r.owner.login}/${r.name}"
+                    .contains(query, ignoreCase = true)
+                val inScope = when (scope) {
+                    RepoScope.All -> true
+                    RepoScope.Mine -> viewerLogin != null && r.owner.login == viewerLogin
+                }
+                matches && inScope
+            }
+            if (filtered.isEmpty()) {
+                StatusRow(if (query.isBlank()) "no repos" else "no repos match \"$query\"")
+            } else {
+                LazyColumn(contentPadding = PaddingValues(bottom = 60.dp)) {
+                    item {
+                        SectionLabel(
+                            label = if (scope == RepoScope.Mine) "your repos" else "all repos",
+                            count = filtered.size,
+                        )
                     }
-                    if (filtered.isEmpty()) {
-                        StatusRow(if (query.isBlank()) "no repos" else "no repos match \"$query\"")
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(bottom = 60.dp),
-                        ) {
-                            item {
-                                SectionLabel(
-                                    label = if (scope == RepoScope.Mine) "your repos" else "all repos",
-                                    count = filtered.size,
-                                )
-                            }
-                            items(filtered, key = { it.id }) { r ->
-                                RepoRow(r, onClick = { onPickRepo(r) })
-                            }
-                        }
+                    items(filtered, key = { it.id }) { r ->
+                        RepoRow(r, onClick = { onPickRepo(r) })
                     }
                 }
             }
@@ -503,40 +501,6 @@ private fun StatusRow(text: String) {
             fontSize = 12.sp,
             color = RedlineColors.TextMute,
         )
-    }
-}
-
-@Composable
-private fun ErrorRow(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(40.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            message,
-            fontFamily = JetBrainsMono,
-            fontSize = 12.sp,
-            color = RedlineColors.Accent,
-        )
-        Spacer(Modifier.height(12.dp))
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(RedlineColors.Surface2)
-                .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
-                .clickable(onClick = onRetry)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            Text(
-                "retry",
-                fontFamily = JetBrainsMono,
-                fontSize = 12.sp,
-                color = RedlineColors.TextDim,
-            )
-        }
     }
 }
 

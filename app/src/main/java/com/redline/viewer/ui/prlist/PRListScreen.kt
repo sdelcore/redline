@@ -41,10 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redline.viewer.Loadable
+import com.redline.viewer.data.Loadable
+import com.redline.viewer.data.avatarColorFor
 import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.data.github.GhRepo
 import com.redline.viewer.data.timeAgo
+import com.redline.viewer.ui.components.LoadableContent
 import com.redline.viewer.ui.theme.Inter
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
@@ -72,17 +74,28 @@ fun PRListScreen(
             onFilter = { filter = it },
         )
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            when (pulls) {
-                Loadable.Idle, Loadable.Loading -> Center("loading pull requests…")
-                is Loadable.Err -> ErrorBlock(pulls.message, onRetry)
-                is Loadable.Ok -> if (pulls.value.isEmpty()) {
-                    Center("no open pull requests")
-                } else {
-                    LazyColumn(contentPadding = PaddingValues(bottom = 80.dp)) {
-                        items(pulls.value, key = { it.number }) { pr ->
-                            PRCard(pr = pr, onOpen = { onOpenPR(pr) })
-                        }
+        LoadableContent(
+            state = pulls,
+            onRetry = onRetry,
+            loadingMessage = "loading pull requests…",
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { list ->
+            if (list.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "no open pull requests",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 12.sp,
+                        color = RedlineColors.TextMute,
+                    )
+                }
+            } else {
+                LazyColumn(contentPadding = PaddingValues(bottom = 80.dp)) {
+                    items(list, key = { it.number }) { pr ->
+                        PRCard(pr = pr, onOpen = { onOpenPR(pr) })
                     }
                 }
             }
@@ -341,40 +354,6 @@ private fun BranchChip(name: String, color: Color) {
 }
 
 @Composable
-private fun Center(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(40.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextMute)
-    }
-}
-
-@Composable
-private fun ErrorBlock(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(40.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(message, fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.Accent)
-        Spacer(Modifier.height(12.dp))
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(RedlineColors.Surface2)
-                .border(1.dp, RedlineColors.Border, RoundedCornerShape(6.dp))
-                .clickable(onClick = onRetry)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            Text("retry", fontFamily = JetBrainsMono, fontSize = 12.sp, color = RedlineColors.TextDim)
-        }
-    }
-}
-
-@Composable
 private fun HDivider() {
     Box(
         modifier = Modifier
@@ -382,13 +361,4 @@ private fun HDivider() {
             .height(1.dp)
             .background(RedlineColors.BorderSoft)
     )
-}
-
-private fun avatarColorFor(login: String): Color {
-    if (login.isEmpty()) return Color(0xFF6E7681)
-    val palette = listOf(
-        0xFFF97316, 0xFF22D3EE, 0xFF3B82F6, 0xFFA855F7, 0xFFEC4899,
-        0xFF14B8A6, 0xFFFBBF24, 0xFFEF4444, 0xFF8B5CF6, 0xFF10B981,
-    )
-    return Color(palette[(login.hashCode().toUInt().toInt() and 0x7FFFFFFF) % palette.size])
 }

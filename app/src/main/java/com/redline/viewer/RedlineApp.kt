@@ -27,6 +27,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.redline.viewer.data.PendingComment
+import com.redline.viewer.data.ReviewVerdict
 import com.redline.viewer.ui.diff.DiffViewScreen
 import com.redline.viewer.ui.files.FileBrowserScreen
 import com.redline.viewer.ui.login.LoginScreen
@@ -62,11 +64,14 @@ fun RedlineApp() {
     val activeRepo by vm.activeRepo.collectAsState()
     val activePull by vm.activePull.collectAsState()
     val detail by vm.detail.collectAsState()
-    val pending by vm.pending.collectAsState()
-    val toast by vm.toast.collectAsState()
 
+    // UI ephemera — owned here, not the VM. Dying on process death is the
+    // desired behaviour (pending review drafts aren't on the GitHub server
+    // yet, and a half-open bottom sheet shouldn't survive a relaunch).
+    var pendingComments by remember { mutableStateOf<List<PendingComment>>(emptyList()) }
     var composer by remember { mutableStateOf<ComposerContext?>(null) }
     var reviewOpen by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
 
     val nav = rememberNavController()
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
@@ -129,7 +134,7 @@ fun RedlineApp() {
                                 vm.setActivePull(pull)
                                 nav.navigate(Routes.Files)
                             },
-                            onRetry = { vm.ensurePullsLoaded(repo, force = true) },
+                            onRetry = { vm.ensurePullsLoaded(force = true) },
                         )
                     }
                 }
@@ -171,7 +176,7 @@ fun RedlineApp() {
                                 composer = ComposerContext(req.side, req.line, req.text, req.fileShort)
                             },
                             onReview = { reviewOpen = true },
-                            pendingComments = pending,
+                            pendingComments = pendingComments,
                             onRetry = { vm.loadDetail(force = true) },
                         )
                     }
@@ -183,13 +188,11 @@ fun RedlineApp() {
                     context = ctx,
                     onCancel = { composer = null },
                     onSubmit = { submit ->
-                        vm.addPending(submit.toPending())
+                        pendingComments = pendingComments + submit.toPending()
                         composer = null
-                        vm.flash(
-                            if (submit.kind == ComposerKind.StartReview)
-                                "Comment added · review started"
-                            else "Comment added to review"
-                        )
+                        toast = if (submit.kind == ComposerKind.StartReview)
+                            "Comment added · review started"
+                        else "Comment added to review"
                         if (submit.kind == ComposerKind.StartReview) reviewOpen = true
                     },
                 )
@@ -198,17 +201,16 @@ fun RedlineApp() {
             if (reviewOpen) {
                 ReviewSheet(
                     prId = activePull?.number ?: 0,
-                    pendingCount = pending.size,
+                    pendingCount = pendingComments.size,
                     onCancel = { reviewOpen = false },
                     onSubmit = { sub ->
                         reviewOpen = false
-                        vm.clearPending()
-                        val label = when (sub.verdict) {
-                            com.redline.viewer.data.ReviewVerdict.Approve -> "approved"
-                            com.redline.viewer.data.ReviewVerdict.RequestChanges -> "requested changes"
-                            com.redline.viewer.data.ReviewVerdict.Comment -> "commented"
+                        pendingComments = emptyList()
+                        toast = when (sub.verdict) {
+                            ReviewVerdict.Approve -> "Review submitted · approved"
+                            ReviewVerdict.RequestChanges -> "Review submitted · requested changes"
+                            ReviewVerdict.Comment -> "Review submitted · commented"
                         }
-                        vm.flash("Review submitted · $label")
                     },
                 )
             }
@@ -216,7 +218,7 @@ fun RedlineApp() {
             toast?.let { msg ->
                 LaunchedEffect(msg) {
                     delay(2200)
-                    vm.consumeToast()
+                    toast = null
                 }
                 Box(
                     modifier = Modifier
