@@ -1,6 +1,7 @@
 package com.redline.viewer.data.github
 
 import android.content.Context
+import android.net.Uri
 import com.redline.viewer.BuildConfig
 import com.redline.viewer.data.ChangedFile
 import com.redline.viewer.data.Check
@@ -21,42 +22,49 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.accept
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.post
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLProtocol
+import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Duration
 import java.time.Instant
 
 sealed class AuthState {
     object Idle : AuthState()
-    object Requesting : AuthState()
-    data class Verifying(val userCode: String, val verificationUri: String) : AuthState()
+    /** Custom Tab is open in the system browser; we're waiting for the redirect. */
+    data class WaitingForCallback(val authorizeUri: Uri) : AuthState()
+    /** Got the auth code from the redirect; calling /login/oauth/access_token. */
+    object Exchanging : AuthState()
     data class Error(val message: String) : AuthState()
 }
 
 /**
  * Everything the app needs to talk to GitHub. Owns the OAuth token,
- * the device-flow lifecycle, and the http client(s). Callers see one
- * surface; rebuilding the http client when the token changes, parsing
- * diff patches, and grouping review comments into threads all happen
- * behind the seam.
+ * the web-flow lifecycle (PKCE + Chrome Custom Tabs), and the http
+ * client(s). Callers see one surface; rebuilding the http client on
+ * token change, parsing diff patches, and grouping review comments
+ * into threads all happen behind the seam.
  */
 class Github(context: Context) {
 
     private val clientId: String = BuildConfig.GITHUB_CLIENT_ID
     private val tokenStore = TokenStore(context.applicationContext)
-    private val deviceAuth: DeviceAuth? =
-        if (clientId.isNotBlank()) DeviceAuth(clientId) else null
+    private val redirectUri: String = REDIRECT_URI
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -66,51 +74,116 @@ class Github(context: Context) {
     private val _authState = MutableStateFlow<AuthState>(AuthState.Idle)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
-    val hasClientId: Boolean get() = deviceAuth != null
+    val hasClientId: Boolean get() = clientId.isNotBlank()
 
     @Volatile
     private var api: HttpClient = buildApiClient(_token.value)
 
-    // ─── Auth ─────────────────────────────────────────────────
+    private val oauthClient: HttpClient = HttpClient(OkHttp) {
+        install(ContentNegotiation) { json(json) }
+    }
+
+    private var pendingVerifier: String? = null
+    private var pendingState: String? = null
+
+    // ─── Auth: web flow ───────────────────────────────────────
 
     /**
-     * Run the GitHub device-flow handshake from start to finish, surfacing
-     * progress via [authState]. On success the token is persisted and
-     * [token] flips to the new value.
-     *
-     * Cancellation is co-operative: cancel the launching job to abort.
-     * The function returns normally in every terminal case; failures land
-     * in `authState` as [AuthState.Error] rather than throwing.
+     * Begin the OAuth web flow. Returns the URL to open in a Chrome
+     * Custom Tab, or `null` if the Client ID isn't configured. Sets
+     * [authState] to [AuthState.WaitingForCallback] so the UI knows
+     * the browser is in charge.
      */
-    suspend fun signIn() {
-        val da = deviceAuth ?: run {
+    fun beginSignIn(): Uri? {
+        if (clientId.isBlank()) {
             _authState.value = AuthState.Error("GITHUB_CLIENT_ID is not set. See README.")
+            return null
+        }
+        val pkce = generatePkce()
+        val state = randomState()
+        pendingVerifier = pkce.verifier
+        pendingState = state
+
+        val uri = Uri.Builder()
+            .scheme("https")
+            .authority("github.com")
+            .path("/login/oauth/authorize")
+            .appendQueryParameter("client_id", clientId)
+            .appendQueryParameter("redirect_uri", redirectUri)
+            .appendQueryParameter("scope", "repo")
+            .appendQueryParameter("state", state)
+            .appendQueryParameter("code_challenge", pkce.challenge)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .build()
+
+        _authState.value = AuthState.WaitingForCallback(uri)
+        return uri
+    }
+
+    /**
+     * Handle the `redline://oauth?...` redirect that GitHub sends back
+     * to the app once the user has authorized. Exchanges `code` for an
+     * access token using the stashed PKCE verifier, validates `state`.
+     */
+    suspend fun completeSignIn(callback: Uri) {
+        val error = callback.getQueryParameter("error")
+        if (!error.isNullOrBlank()) {
+            val desc = callback.getQueryParameter("error_description") ?: error
+            _authState.value = AuthState.Error(desc)
             return
         }
-        _authState.value = AuthState.Requesting
+        val code = callback.getQueryParameter("code")
+        if (code.isNullOrBlank()) {
+            _authState.value = AuthState.Error("no code in redirect")
+            return
+        }
+        val receivedState = callback.getQueryParameter("state")
+        val expectedState = pendingState
+        val verifier = pendingVerifier
+        if (expectedState == null || verifier == null) {
+            _authState.value = AuthState.Error("no pending sign-in")
+            return
+        }
+        if (receivedState != expectedState) {
+            _authState.value = AuthState.Error("state mismatch")
+            return
+        }
+
+        _authState.value = AuthState.Exchanging
         try {
-            val code = da.requestCode()
-            _authState.value = AuthState.Verifying(code.user_code, code.verification_uri)
-            when (val r = da.poll(code)) {
-                is PollResult.Success -> {
-                    tokenStore.accessToken = r.accessToken
-                    replaceApiClient(r.accessToken)
-                    _token.value = r.accessToken
-                    _authState.value = AuthState.Idle
-                }
-                is PollResult.Error -> {
-                    _authState.value = AuthState.Error(r.message.ifBlank { r.code })
-                }
+            val resp = oauthClient.post("https://github.com/login/oauth/access_token") {
+                accept(ContentType.Application.Json)
+                contentType(ContentType.Application.FormUrlEncoded)
+                parameter("client_id", clientId)
+                parameter("code", code)
+                parameter("redirect_uri", redirectUri)
+                parameter("code_verifier", verifier)
             }
-        } catch (c: CancellationException) {
-            _authState.value = AuthState.Idle
-            throw c
+            if (resp.status != HttpStatusCode.OK) {
+                _authState.value = AuthState.Error("token endpoint: HTTP ${resp.status.value}")
+                return
+            }
+            val body = resp.bodyAsText()
+            val ok = runCatching { json.decodeFromString(TokenSuccess.serializer(), body) }.getOrNull()
+            if (ok != null && ok.access_token.isNotBlank()) {
+                tokenStore.accessToken = ok.access_token
+                replaceApiClient(ok.access_token)
+                _token.value = ok.access_token
+                _authState.value = AuthState.Idle
+                pendingVerifier = null
+                pendingState = null
+                return
+            }
+            val err = runCatching { json.decodeFromString(TokenError.serializer(), body) }.getOrNull()
+            _authState.value = AuthState.Error(err?.error_description ?: err?.error ?: "token exchange failed")
         } catch (t: Throwable) {
-            _authState.value = AuthState.Error(t.message ?: "auth failed")
+            _authState.value = AuthState.Error(t.message ?: "token exchange failed")
         }
     }
 
-    fun cancelSignInState() {
+    fun cancelSignIn() {
+        pendingVerifier = null
+        pendingState = null
         _authState.value = AuthState.Idle
     }
 
@@ -119,6 +192,8 @@ class Github(context: Context) {
         replaceApiClient(null)
         _token.value = null
         _authState.value = AuthState.Idle
+        pendingVerifier = null
+        pendingState = null
     }
 
     // ─── Data ─────────────────────────────────────────────────
@@ -142,14 +217,6 @@ class Github(context: Context) {
             parameter("per_page", perPage)
         }.body()
 
-    /**
-     * Fetch every piece the file-browser and diff-view need for a single PR
-     * in parallel and stitch the result into a [PullDetailBundle]:
-     * - detail (additions/deletions/changed_files/mergeable)
-     * - files (filename, status, additions, deletions, patch)
-     * - check-runs for the head SHA
-     * - review comments grouped by file path → inline threads
-     */
     suspend fun pullBundle(repo: GhRepo, pull: GhPull): PullDetailBundle = coroutineScope {
         val owner = repo.owner.login
         val name = repo.name
@@ -204,7 +271,6 @@ class Github(context: Context) {
         val checks = checkRuns.map { it.toCheck() }
         val commentsByShort = ghComments.toThreadsByPath()
             .mapKeys { (path, _) -> path.substringAfterLast('/') }
-
         val conversation = buildConversation(ghIssueComments, ghReviews)
 
         PullDetailBundle(detail, files, diffs, checks, commentsByShort, conversation)
@@ -237,9 +303,26 @@ class Github(context: Context) {
 
     fun close() {
         api.close()
-        deviceAuth?.close()
+        oauthClient.close()
+    }
+
+    companion object {
+        const val REDIRECT_URI: String = "redline://oauth"
     }
 }
+
+@Serializable
+private data class TokenSuccess(
+    val access_token: String,
+    val token_type: String? = null,
+    val scope: String? = null,
+)
+
+@Serializable
+private data class TokenError(
+    val error: String,
+    val error_description: String? = null,
+)
 
 // ─── Mapping helpers (kept private; only the bundle leaves) ──────
 
