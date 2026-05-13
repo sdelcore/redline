@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,10 +17,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +35,8 @@ import com.redline.viewer.ui.review.InlineThread
 import com.redline.viewer.ui.review.pendingThread
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
+
+data class JumpTarget(val line: Int, val side: CommentSide)
 
 @Composable
 fun CodePane(
@@ -49,12 +52,37 @@ fun CodePane(
     onCommentLine: (CommentRequest) -> Unit,
     label: String,
     sublabel: String,
+    jumpTarget: JumpTarget? = null,
+    onJumpConsumed: () -> Unit = {},
 ) {
     val fontSize = (12 * scale).sp
     val lineHeight = (18 * scale).dp
     val labelColor = if (side == CommentSide.Old) RedlineColors.Accent else RedlineColors.Green
     val labelBg = if (side == CommentSide.Old) Color(0x14E53935) else Color(0x1443A047)
     val labelBorder = if (side == CommentSide.Old) Color(0x33E53935) else Color(0x3343A047)
+    val labelBandHeight = 18.dp
+
+    // Scroll to the requested line when a jump is requested.
+    val density = LocalDensity.current
+    LaunchedEffect(jumpTarget) {
+        val target = jumpTarget ?: return@LaunchedEffect
+        if (target.side != side) return@LaunchedEffect
+        val idx = diff.indexOfFirst {
+            it.type != DiffRowType.Hunk &&
+                (if (side == CommentSide.Old) it.old?.n else it.newer?.n) == target.line
+        }
+        if (idx < 0) {
+            onJumpConsumed()
+            return@LaunchedEffect
+        }
+        val offsetPx = with(density) {
+            (labelBandHeight.toPx() + idx * lineHeight.toPx()).toInt()
+        }
+        // center-ish: subtract ~1/3 of viewport
+        val target0 = (offsetPx - (lineHeight.value * density.density * 4)).toInt().coerceAtLeast(0)
+        vScroll.animateScrollTo(target0)
+        onJumpConsumed()
+    }
 
     Box(
         modifier = Modifier
@@ -71,11 +99,10 @@ fun CodePane(
                 .fillMaxSize()
                 .verticalScroll(vScroll),
         ) {
-            // Sticky-ish side label band — pinned at top of pane (visible row before scroll content)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(18.dp)
+                    .height(labelBandHeight)
                     .background(labelBg),
             ) {
                 Row(
@@ -107,7 +134,6 @@ fun CodePane(
                 )
             }
 
-            // Horizontal-scroll body — width grows to longest line; rows below render at that width
             Column(
                 modifier = Modifier
                     .horizontalScroll(hScroll)

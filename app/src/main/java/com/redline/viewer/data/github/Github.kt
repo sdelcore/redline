@@ -7,8 +7,11 @@ import com.redline.viewer.data.Check
 import com.redline.viewer.data.CheckSummary
 import com.redline.viewer.data.Comment
 import com.redline.viewer.data.CommentSide
+import com.redline.viewer.data.ConversationItem
+import com.redline.viewer.data.ConversationKind
 import com.redline.viewer.data.FileStatus
 import com.redline.viewer.data.PullDetailBundle
+import com.redline.viewer.data.ReviewVerdict
 import com.redline.viewer.data.Thread
 import com.redline.viewer.data.avatarColorFor
 import com.redline.viewer.data.parseUnifiedDiff
@@ -172,11 +175,27 @@ class Github(context: Context) {
                 }.body<List<GhReviewComment>>()
             }.getOrNull().orEmpty()
         }
+        val dIssueComments = async {
+            runCatching {
+                api.get("repos/$owner/$name/issues/$number/comments") {
+                    parameter("per_page", 100)
+                }.body<List<GhIssueComment>>()
+            }.getOrNull().orEmpty()
+        }
+        val dReviews = async {
+            runCatching {
+                api.get("repos/$owner/$name/pulls/$number/reviews") {
+                    parameter("per_page", 100)
+                }.body<List<GhReview>>()
+            }.getOrNull().orEmpty()
+        }
 
         val detail = dDetail.await()
         val ghFiles = dFiles.await()
         val checkRuns = dChecks.await()?.check_runs.orEmpty()
         val ghComments = dComments.await()
+        val ghIssueComments = dIssueComments.await()
+        val ghReviews = dReviews.await()
 
         val files = ghFiles.map { it.toChangedFile() }
         val diffs = ghFiles.associate { gf ->
@@ -186,7 +205,9 @@ class Github(context: Context) {
         val commentsByShort = ghComments.toThreadsByPath()
             .mapKeys { (path, _) -> path.substringAfterLast('/') }
 
-        PullDetailBundle(detail, files, diffs, checks, commentsByShort)
+        val conversation = buildConversation(ghIssueComments, ghReviews)
+
+        PullDetailBundle(detail, files, diffs, checks, commentsByShort, conversation)
     }
 
     // ─── Internals ────────────────────────────────────────────
@@ -282,6 +303,44 @@ private fun List<GhReviewComment>.toThreadsByPath(): Map<String, List<Thread>> =
 
 private fun sideOf(c: GhReviewComment): CommentSide =
     if ((c.side ?: "RIGHT").equals("LEFT", ignoreCase = true)) CommentSide.Old else CommentSide.New
+
+private fun buildConversation(
+    issues: List<GhIssueComment>,
+    reviews: List<GhReview>,
+): List<ConversationItem> {
+    val issueItems = issues.map { ic ->
+        val login = ic.user?.login.orEmpty()
+        ConversationItem(
+            author = login.ifEmpty { "?" },
+            avatar = avatarColorFor(login),
+            whenLabel = timeAgo(ic.created_at),
+            createdAt = ic.created_at,
+            kind = ConversationKind.Comment,
+            body = ic.body,
+        )
+    }
+    val reviewItems = reviews
+        .filter { it.state != null && it.state != "PENDING" }
+        .map { rv ->
+            val login = rv.user?.login.orEmpty()
+            val submitted = rv.submitted_at ?: ""
+            ConversationItem(
+                author = login.ifEmpty { "?" },
+                avatar = avatarColorFor(login),
+                whenLabel = timeAgo(submitted.ifEmpty { null }),
+                createdAt = submitted,
+                kind = ConversationKind.Review,
+                body = rv.body.orEmpty(),
+                verdict = when (rv.state) {
+                    "APPROVED" -> ReviewVerdict.Approve
+                    "CHANGES_REQUESTED" -> ReviewVerdict.RequestChanges
+                    else -> ReviewVerdict.Comment
+                },
+            )
+        }
+        .filter { it.body.isNotBlank() || it.verdict != ReviewVerdict.Comment }
+    return (issueItems + reviewItems).sortedBy { it.createdAt }
+}
 
 private fun GhReviewComment.toComment(): Comment {
     val login = user?.login.orEmpty()

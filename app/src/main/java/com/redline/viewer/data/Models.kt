@@ -56,3 +56,15 @@ data class PendingComment(
 )
 
 enum class ReviewVerdict { Comment, Approve, RequestChanges }
+
+enum class ConversationKind { Comment, Review }
+
+data class ConversationItem(
+    val author: String,
+    val avatar: Color,
+    val whenLabel: String,
+    val createdAt: String,
+    val kind: ConversationKind,
+    val body: String,
+    val verdict: ReviewVerdict? = null,
+)

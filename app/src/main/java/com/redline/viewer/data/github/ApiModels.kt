@@ -118,3 +118,21 @@ data class GhReviewComment(
     val updated_at: String,
     val diff_hunk: String? = null,
 )
+
+@Serializable
+data class GhIssueComment(
+    val id: Long,
+    val body: String = "",
+    val user: GhPullUser? = null,
+    val created_at: String,
+    val updated_at: String,
+)
+
+@Serializable
+data class GhReview(
+    val id: Long,
+    val body: String? = null,
+    val state: String? = null, // "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING"
+    val user: GhPullUser? = null,
+    val submitted_at: String? = null,
+)
