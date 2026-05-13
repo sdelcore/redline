@@ -49,6 +49,8 @@ fun SplitPane(
     onCommentLine: (CommentRequest) -> Unit,
     oldSublabel: String,
     newSublabel: String,
+    jumpTarget: JumpTarget? = null,
+    onJumpConsumed: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -79,6 +81,8 @@ fun SplitPane(
                     onCommentLine = onCommentLine,
                     label = "old",
                     sublabel = oldSublabel,
+                    jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.Old },
+                    onJumpConsumed = onJumpConsumed,
                 )
             }
             // Drag handle
@@ -128,6 +132,8 @@ fun SplitPane(
                     onCommentLine = onCommentLine,
                     label = "new",
                     sublabel = newSublabel,
+                    jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.New },
+                    onJumpConsumed = onJumpConsumed,
                 )
             }
         }

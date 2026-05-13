@@ -128,6 +128,7 @@ private fun Body(
     ) {
         item { MergeBlock(checks = bundle.checks, onReview = onReview) }
         item { ChecksBlock(checks = bundle.checks) }
+        item { ConversationBlock(items = bundle.conversation) }
         item {
             SummaryBar(
                 fileCount = bundle.files.size,

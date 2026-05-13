@@ -8,4 +8,5 @@ data class PullDetailBundle(
     val diffs: Map<String, List<DiffRow>>,
     val checks: List<Check>,
     val commentsByPath: Map<String, List<Thread>>,
+    val conversation: List<ConversationItem>,
 )

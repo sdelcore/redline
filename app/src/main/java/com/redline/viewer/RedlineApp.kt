@@ -72,6 +72,7 @@ fun RedlineApp() {
     var composer by remember { mutableStateOf<ComposerContext?>(null) }
     var reviewOpen by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
+    var viewedFiles by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val nav = rememberNavController()
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
@@ -178,6 +179,10 @@ fun RedlineApp() {
                             onReview = { reviewOpen = true },
                             pendingComments = pendingComments,
                             onRetry = { vm.loadDetail(force = true) },
+                            viewedFiles = viewedFiles,
+                            onToggleViewed = { path ->
+                                viewedFiles = if (viewedFiles.contains(path)) viewedFiles - path else viewedFiles + path
+                            },
                         )
                     }
                 }
