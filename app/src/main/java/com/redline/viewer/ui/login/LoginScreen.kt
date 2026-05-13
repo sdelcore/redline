@@ -1,8 +1,6 @@
 package com.redline.viewer.ui.login
 
-import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,15 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,15 +24,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
-import kotlinx.coroutines.delay
 import com.redline.viewer.data.github.AuthState
 import com.redline.viewer.ui.components.GitHubMark
 import com.redline.viewer.ui.components.RedlineButton
@@ -55,8 +42,6 @@ fun LoginScreen(
     onStart: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    val context = LocalContext.current
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -92,17 +77,8 @@ fun LoginScreen(
 
             when (state) {
                 AuthState.Idle -> IdleBlock(enabled = hasClientId, onStart = onStart)
-                AuthState.Requesting -> StatusBlock("requesting device code…")
-                is AuthState.Verifying -> VerifyingBlock(
-                    userCode = state.userCode,
-                    verificationUri = state.verificationUri,
-                    onOpenBrowser = {
-                        val intent = Intent(Intent.ACTION_VIEW, state.verificationUri.toUri())
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
-                    },
-                    onCancel = onCancel,
-                )
+                is AuthState.WaitingForCallback -> WaitingBlock(onOpenAgain = onStart, onCancel = onCancel)
+                AuthState.Exchanging -> StatusBlock("completing sign-in…")
                 is AuthState.Error -> ErrorBlock(state.message, onRetry = onStart)
             }
 
@@ -145,85 +121,28 @@ private fun StatusBlock(text: String) {
 }
 
 @Composable
-private fun VerifyingBlock(
-    userCode: String,
-    verificationUri: String,
-    onOpenBrowser: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) { delay(1400); copied = false }
-    }
-
-    val doCopy = {
-        clipboard.setText(AnnotatedString(userCode))
-        copied = true
-    }
-
+private fun WaitingBlock(onOpenAgain: () -> Unit, onCancel: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "go to $verificationUri",
+            "authorize redline on github.com,",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = RedlineColors.TextDim,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
-            "tap the code to copy:",
+            "then return to the app.",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
-            color = RedlineColors.TextMute,
+            color = RedlineColors.TextDim,
         )
-        Spacer(Modifier.height(10.dp))
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(RedlineColors.Surface2)
-                .clickable(onClick = doCopy)
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-        ) {
-            Text(
-                userCode,
-                fontFamily = JetBrainsMono,
-                fontWeight = FontWeight.Bold,
-                fontSize = 26.sp,
-                color = RedlineColors.Accent,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .clickable(onClick = doCopy)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        ) {
-            Text(
-                if (copied) "✓ copied" else "copy code",
-                fontFamily = JetBrainsMono,
-                fontSize = 11.sp,
-                color = if (copied) RedlineColors.Green else RedlineColors.Blue,
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        RedlineButton(
-            text = "Open ${verificationUri.removePrefix("https://").removePrefix("http://")}",
-            onClick = onOpenBrowser,
-        )
+        Spacer(Modifier.height(16.dp))
+        RedlineButton(text = "Open browser again", onClick = onOpenAgain)
         Spacer(Modifier.height(8.dp))
         SubtleOutlinedButton(text = "cancel", onClick = onCancel)
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "waiting for authorization…",
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            color = RedlineColors.TextMute,
-        )
     }
 }
 

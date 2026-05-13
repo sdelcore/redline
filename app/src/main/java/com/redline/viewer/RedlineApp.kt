@@ -1,5 +1,7 @@
 package com.redline.viewer
 
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,10 +58,36 @@ private object Routes {
 }
 
 @Composable
-fun RedlineApp() {
+fun RedlineApp(
+    oauthCallback: Uri? = null,
+    onOauthCallbackConsumed: () -> Unit = {},
+) {
     val vm: AppViewModel = viewModel()
     val token by vm.token.collectAsState()
     val authState by vm.authState.collectAsState()
+    val context = LocalContext.current
+
+    // Hand any incoming `redline://oauth?…` redirect off to the VM. The
+    // MainActivity captures it; we just forward it.
+    LaunchedEffect(oauthCallback) {
+        val cb = oauthCallback ?: return@LaunchedEffect
+        vm.handleCallback(cb)
+        onOauthCallbackConsumed()
+    }
+
+    val launchSignIn: () -> Unit = launch@{
+        val current = authState
+        val uri = if (current is com.redline.viewer.data.github.AuthState.WaitingForCallback) {
+            current.authorizeUri
+        } else {
+            vm.beginSignIn() ?: return@launch
+        }
+        val tab = CustomTabsIntent.Builder()
+            .setShowTitle(true)
+            .build()
+        tab.launchUrl(context, uri)
+    }
+
     val viewer by vm.viewer.collectAsState()
     val repos by vm.repos.collectAsState()
     val pulls by vm.pulls.collectAsState()
@@ -103,8 +133,8 @@ fun RedlineApp() {
                     LoginScreen(
                         state = authState,
                         hasClientId = vm.hasClientId,
-                        onStart = { vm.startDeviceFlow() },
-                        onCancel = { vm.cancelDeviceFlow() },
+                        onStart = launchSignIn,
+                        onCancel = { vm.cancelSignIn() },
                     )
                 }
 

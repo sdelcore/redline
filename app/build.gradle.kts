@@ -71,6 +71,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.browser)
 
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)

@@ -1,6 +1,7 @@
 package com.redline.viewer
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.redline.viewer.data.Loadable
@@ -52,16 +53,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var pullsJob: Job? = null
     private var detailJob: Job? = null
 
-    // ─── Auth ─────────────────────────────────────────────────
+    // ─── Auth (web flow) ──────────────────────────────────────
 
-    fun startDeviceFlow() {
+    /** Returns the URL to open in a Chrome Custom Tab, or null if no Client ID. */
+    fun beginSignIn(): Uri? = github.beginSignIn()
+
+    /** Called by MainActivity when the `redline://oauth?...` redirect lands. */
+    fun handleCallback(uri: Uri) {
         authJob?.cancel()
-        authJob = viewModelScope.launch { github.signIn() }
+        authJob = viewModelScope.launch { github.completeSignIn(uri) }
     }
 
-    fun cancelDeviceFlow() {
+    fun cancelSignIn() {
         authJob?.cancel()
-        github.cancelSignInState()
+        github.cancelSignIn()
     }
 
     fun signOut() {
