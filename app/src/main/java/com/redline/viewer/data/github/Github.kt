@@ -63,6 +63,7 @@ sealed class AuthState {
 class Github(context: Context) {
 
     private val clientId: String = BuildConfig.GITHUB_CLIENT_ID
+    private val clientSecret: String = BuildConfig.GITHUB_CLIENT_SECRET
     private val tokenStore = TokenStore(context.applicationContext)
     private val redirectUri: String = REDIRECT_URI
 
@@ -155,6 +156,7 @@ class Github(context: Context) {
                 accept(ContentType.Application.Json)
                 contentType(ContentType.Application.FormUrlEncoded)
                 parameter("client_id", clientId)
+                parameter("client_secret", clientSecret)
                 parameter("code", code)
                 parameter("redirect_uri", redirectUri)
                 parameter("code_verifier", verifier)
