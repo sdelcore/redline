@@ -12,6 +12,7 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val githubClientId: String = localProps.getProperty("GITHUB_CLIENT_ID", "")
+val githubClientSecret: String = localProps.getProperty("GITHUB_CLIENT_SECRET", "")
 
 android {
     namespace = "com.redline.viewer"
@@ -26,6 +27,7 @@ android {
         versionName = "0.1.0"
 
         buildConfigField("String", "GITHUB_CLIENT_ID", "\"$githubClientId\"")
+        buildConfigField("String", "GITHUB_CLIENT_SECRET", "\"$githubClientSecret\"")
     }
 
     buildTypes {

@@ -22,7 +22,10 @@ jobs:
 
       - name: Write local.properties
         run: |
-          echo "GITHUB_CLIENT_ID=${{ vars.OAUTH_CLIENT_ID }}" > local.properties
+          {
+            echo "GITHUB_CLIENT_ID=${{ vars.OAUTH_CLIENT_ID }}"
+            echo "GITHUB_CLIENT_SECRET=${{ secrets.OAUTH_CLIENT_SECRET }}"
+          } > local.properties
 
       - name: Build debug APK
         run: nix develop --command ./gradlew --no-daemon assembleDebug
