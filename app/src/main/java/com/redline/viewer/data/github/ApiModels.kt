@@ -44,6 +44,23 @@ data class GhPullRef(
 )
 
 @Serializable
+data class GhLabel(
+    val id: Long = 0,
+    val name: String,
+    val color: String = "",
+    val description: String? = null,
+)
+
+@Serializable
+data class GhMilestone(
+    val number: Int,
+    val title: String,
+    val state: String = "open",
+    val description: String? = null,
+    val due_on: String? = null,
+)
+
+@Serializable
 data class GhPull(
     val number: Int,
     val title: String,
@@ -61,6 +78,10 @@ data class GhPull(
     val changed_files: Int? = null,
     val mergeable: Boolean? = null,
     val mergeable_state: String? = null,
+    val assignees: List<GhPullUser> = emptyList(),
+    val requested_reviewers: List<GhPullUser> = emptyList(),
+    val labels: List<GhLabel> = emptyList(),
+    val milestone: GhMilestone? = null,
 )
 
 @Serializable
@@ -156,3 +177,29 @@ data class GhReview(
     val user: GhPullUser? = null,
     val submitted_at: String? = null,
 )
+
+@Serializable
+data class GhRequestedReviewers(
+    val users: List<GhPullUser> = emptyList(),
+    val teams: List<GhTeam> = emptyList(),
+)
+
+@Serializable
+data class GhTeam(
+    val slug: String,
+    val name: String = "",
+)
+
+// ─── Mutation request bodies ──────────────────────────────────────
+
+@Serializable
+internal data class AssigneesBody(val assignees: List<String>)
+
+@Serializable
+internal data class ReviewersBody(val reviewers: List<String>)
+
+@Serializable
+internal data class LabelsBody(val labels: List<String>)
+
+@Serializable
+internal data class MilestoneBody(val milestone: Int?)

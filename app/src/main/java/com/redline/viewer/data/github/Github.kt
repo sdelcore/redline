@@ -23,10 +23,14 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.accept
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -230,6 +234,59 @@ class Github(context: Context) {
 
     suspend fun pull(owner: String, name: String, number: Int): GhPull =
         api.get("repos/$owner/$name/pulls/$number").body()
+
+    // ─── PR metadata: list available options ─────────────────────
+
+    suspend fun assignableUsers(owner: String, name: String): List<GhPullUser> =
+        api.get("repos/$owner/$name/assignees") { parameter("per_page", 100) }.body()
+
+    suspend fun repoLabels(owner: String, name: String): List<GhLabel> =
+        api.get("repos/$owner/$name/labels") { parameter("per_page", 100) }.body()
+
+    suspend fun repoMilestones(owner: String, name: String): List<GhMilestone> =
+        api.get("repos/$owner/$name/milestones") {
+            parameter("state", "open")
+            parameter("per_page", 100)
+        }.body()
+
+    // ─── PR metadata: mutations ──────────────────────────────────
+
+    suspend fun setAssignees(owner: String, name: String, number: Int, logins: List<String>) {
+        api.patch("repos/$owner/$name/issues/$number") {
+            contentType(ContentType.Application.Json)
+            setBody(AssigneesBody(logins))
+        }
+    }
+
+    suspend fun addReviewers(owner: String, name: String, number: Int, logins: List<String>) {
+        if (logins.isEmpty()) return
+        api.post("repos/$owner/$name/pulls/$number/requested_reviewers") {
+            contentType(ContentType.Application.Json)
+            setBody(ReviewersBody(logins))
+        }
+    }
+
+    suspend fun removeReviewers(owner: String, name: String, number: Int, logins: List<String>) {
+        if (logins.isEmpty()) return
+        api.delete("repos/$owner/$name/pulls/$number/requested_reviewers") {
+            contentType(ContentType.Application.Json)
+            setBody(ReviewersBody(logins))
+        }
+    }
+
+    suspend fun setLabels(owner: String, name: String, number: Int, labels: List<String>) {
+        api.put("repos/$owner/$name/issues/$number/labels") {
+            contentType(ContentType.Application.Json)
+            setBody(LabelsBody(labels))
+        }
+    }
+
+    suspend fun setMilestone(owner: String, name: String, number: Int, milestoneNumber: Int?) {
+        api.patch("repos/$owner/$name/issues/$number") {
+            contentType(ContentType.Application.Json)
+            setBody(MilestoneBody(milestoneNumber))
+        }
+    }
 
     suspend fun pullBundle(repo: GhRepo, pull: GhPull): PullDetailBundle = coroutineScope {
         val owner = repo.owner.login

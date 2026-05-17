@@ -35,6 +35,8 @@ import com.redline.viewer.data.PendingComment
 import com.redline.viewer.data.ReviewVerdict
 import com.redline.viewer.ui.diff.DiffViewScreen
 import com.redline.viewer.ui.files.FileBrowserScreen
+import com.redline.viewer.ui.files.MetadataKind
+import com.redline.viewer.ui.files.MetadataPicker
 import com.redline.viewer.ui.login.LoginScreen
 import com.redline.viewer.ui.prlist.PRListScreen
 import com.redline.viewer.ui.repos.RepoPickerScreen
@@ -96,6 +98,8 @@ fun RedlineApp(
     val activeRepo by vm.activeRepo.collectAsState()
     val activePull by vm.activePull.collectAsState()
     val detail by vm.detail.collectAsState()
+    val metadataOptions by vm.metadataOptions.collectAsState()
+    val metadataSaving by vm.metadataSaving.collectAsState()
 
     // UI ephemera — owned here, not the VM. Dying on process death is the
     // desired behaviour (pending review drafts aren't on the GitHub server
@@ -105,6 +109,7 @@ fun RedlineApp(
     var reviewOpen by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var viewedFiles by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var metadataPicker by remember { mutableStateOf<MetadataKind?>(null) }
 
     val nav = rememberNavController()
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
@@ -193,6 +198,7 @@ fun RedlineApp(
                             onBack = { nav.popBackStack() },
                             onReview = { reviewOpen = true },
                             onRetry = { vm.loadDetail(force = true) },
+                            onEditMetadata = { kind -> metadataPicker = kind },
                         )
                     }
                 }
@@ -240,6 +246,62 @@ fun RedlineApp(
                             "Comment added · review started"
                         else "Comment added to review"
                         if (submit.kind == ComposerKind.StartReview) reviewOpen = true
+                    },
+                )
+            }
+
+            metadataPicker?.let { kind ->
+                val currentPull = activePull
+                MetadataPicker(
+                    kind = kind,
+                    options = metadataOptions,
+                    currentAssignees = currentPull?.assignees?.map { it.login }.orEmpty(),
+                    currentReviewers = currentPull?.requested_reviewers?.map { it.login }.orEmpty(),
+                    currentLabels = currentPull?.labels?.map { it.name }.orEmpty(),
+                    currentMilestone = currentPull?.milestone?.number,
+                    saving = metadataSaving,
+                    onLoad = { vm.ensureMetadataOptionsLoaded() },
+                    onRetry = { vm.ensureMetadataOptionsLoaded(force = true) },
+                    onCancel = { metadataPicker = null },
+                    onSaveAssignees = { logins ->
+                        vm.setPullAssignees(logins) { err ->
+                            if (err == null) {
+                                metadataPicker = null
+                                toast = "Assignees updated"
+                            } else {
+                                toast = "Save failed: ${err.message ?: "unknown"}"
+                            }
+                        }
+                    },
+                    onSaveReviewers = { logins ->
+                        vm.setPullReviewers(logins) { err ->
+                            if (err == null) {
+                                metadataPicker = null
+                                toast = "Reviewers updated"
+                            } else {
+                                toast = "Save failed: ${err.message ?: "unknown"}"
+                            }
+                        }
+                    },
+                    onSaveLabels = { labels ->
+                        vm.setPullLabels(labels) { err ->
+                            if (err == null) {
+                                metadataPicker = null
+                                toast = "Labels updated"
+                            } else {
+                                toast = "Save failed: ${err.message ?: "unknown"}"
+                            }
+                        }
+                    },
+                    onSaveMilestone = { num ->
+                        vm.setPullMilestone(num) { err ->
+                            if (err == null) {
+                                metadataPicker = null
+                                toast = "Milestone updated"
+                            } else {
+                                toast = "Save failed: ${err.message ?: "unknown"}"
+                            }
+                        }
                     },
                 )
             }
