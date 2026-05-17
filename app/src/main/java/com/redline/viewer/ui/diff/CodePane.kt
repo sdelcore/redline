@@ -52,6 +52,7 @@ fun CodePane(
     onCommentLine: (CommentRequest) -> Unit,
     label: String,
     sublabel: String,
+    wordWrap: Boolean = false,
     jumpTarget: JumpTarget? = null,
     onJumpConsumed: () -> Unit = {},
 ) {
@@ -134,11 +135,12 @@ fun CodePane(
                 )
             }
 
-            Column(
-                modifier = Modifier
-                    .horizontalScroll(hScroll)
-                    .widthIn(min = 0.dp),
-            ) {
+            val rowsMod = if (wordWrap) {
+                Modifier.fillMaxWidth()
+            } else {
+                Modifier.horizontalScroll(hScroll).widthIn(min = 0.dp)
+            }
+            Column(modifier = rowsMod) {
                 diff.forEachIndexed { _, row ->
                     val lineNum = when {
                         row.type == DiffRowType.Hunk -> null
@@ -155,6 +157,7 @@ fun CodePane(
                         side = side,
                         fontSize = fontSize,
                         lineHeight = lineHeight,
+                        wordWrap = wordWrap,
                         onClick = if (lineNum != null) {
                             {
                                 val text = if (side == CommentSide.Old) row.old?.text else row.newer?.text

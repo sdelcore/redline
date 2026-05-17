@@ -49,9 +49,17 @@ fun SplitPane(
     onCommentLine: (CommentRequest) -> Unit,
     oldSublabel: String,
     newSublabel: String,
+    swap: Boolean = false,
+    wordWrap: Boolean = false,
     jumpTarget: JumpTarget? = null,
     onJumpConsumed: () -> Unit = {},
 ) {
+    val topSide = if (swap) CommentSide.New else CommentSide.Old
+    val botSide = if (swap) CommentSide.Old else CommentSide.New
+    val topLabel = if (swap) "new" else "old"
+    val botLabel = if (swap) "old" else "new"
+    val topSub = if (swap) newSublabel else oldSublabel
+    val botSub = if (swap) oldSublabel else newSublabel
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -69,7 +77,7 @@ fun SplitPane(
                 .fillMaxWidth()
                 .height(with(LocalDensity.current) { topPx.toDp() })) {
                 CodePane(
-                    side = CommentSide.Old,
+                    side = topSide,
                     diff = diff,
                     threads = threads,
                     pending = pending,
@@ -79,9 +87,10 @@ fun SplitPane(
                     hScroll = hScroll,
                     onScaleChange = onScaleChange,
                     onCommentLine = onCommentLine,
-                    label = "old",
-                    sublabel = oldSublabel,
-                    jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.Old },
+                    label = topLabel,
+                    sublabel = topSub,
+                    wordWrap = wordWrap,
+                    jumpTarget = jumpTarget?.takeIf { it.side == topSide },
                     onJumpConsumed = onJumpConsumed,
                 )
             }
@@ -120,7 +129,7 @@ fun SplitPane(
                 .fillMaxWidth()
                 .height(with(LocalDensity.current) { botPx.toDp() })) {
                 CodePane(
-                    side = CommentSide.New,
+                    side = botSide,
                     diff = diff,
                     threads = threads,
                     pending = pending,
@@ -130,9 +139,10 @@ fun SplitPane(
                     hScroll = hScroll,
                     onScaleChange = onScaleChange,
                     onCommentLine = onCommentLine,
-                    label = "new",
-                    sublabel = newSublabel,
-                    jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.New },
+                    label = botLabel,
+                    sublabel = botSub,
+                    wordWrap = wordWrap,
+                    jumpTarget = jumpTarget?.takeIf { it.side == botSide },
                     onJumpConsumed = onJumpConsumed,
                 )
             }

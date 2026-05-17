@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
@@ -34,6 +36,7 @@ fun DiffLineView(
     fontSize: TextUnit,
     lineHeight: Dp,
     onClick: (() -> Unit)? = null,
+    wordWrap: Boolean = false,
 ) {
     if (row.type == DiffRowType.Hunk) {
         Row(
@@ -136,9 +139,10 @@ fun DiffLineView(
     }
     val isPlain = bg == Color.Transparent
 
+    val rowHeightMod = if (wordWrap) Modifier.heightIn(min = lineHeight) else Modifier.height(lineHeight)
     Row(
         modifier = Modifier
-            .height(lineHeight)
+            .then(rowHeightMod)
             .background(bg)
             .let { if (onClick != null) it.clickable(onClick = onClick) else it },
     ) {
@@ -181,14 +185,15 @@ fun DiffLineView(
                 color = markerColor,
             )
         }
+        val textMod = if (wordWrap) Modifier.weight(1f).padding(end = 16.dp) else Modifier.padding(end = 16.dp)
         Text(
             highlight(lineData.text),
             fontFamily = JetBrainsMono,
             fontSize = fontSize,
             color = RedlineColors.Text,
-            softWrap = false,
-            maxLines = 1,
-            modifier = Modifier.padding(end = 16.dp),
+            softWrap = wordWrap,
+            maxLines = if (wordWrap) Int.MAX_VALUE else 1,
+            modifier = textMod,
         )
     }
 }
