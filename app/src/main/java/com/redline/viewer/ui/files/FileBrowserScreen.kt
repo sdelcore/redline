@@ -63,6 +63,7 @@ fun FileBrowserScreen(
     onBack: () -> Unit,
     onReview: () -> Unit,
     onRetry: () -> Unit,
+    onEditMetadata: (MetadataKind) -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -78,7 +79,12 @@ fun FileBrowserScreen(
                 onRetry = onRetry,
                 loadingMessage = "loading pull request…",
             ) { bundle ->
-                Body(bundle = bundle, onOpenFile = onOpenFile, onReview = onReview)
+                Body(
+                    bundle = bundle,
+                    onOpenFile = onOpenFile,
+                    onReview = onReview,
+                    onEditMetadata = onEditMetadata,
+                )
             }
         }
 
@@ -117,6 +123,7 @@ private fun Body(
     bundle: PullDetailBundle,
     onOpenFile: (ChangedFile, Int) -> Unit,
     onReview: () -> Unit,
+    onEditMetadata: (MetadataKind) -> Unit,
 ) {
     val pr = bundle.pull
     val additions = pr.additions ?: bundle.files.sumOf { it.additions }
@@ -127,6 +134,15 @@ private fun Body(
         contentPadding = PaddingValues(bottom = 80.dp),
     ) {
         item { MergeBlock(checks = bundle.checks, onReview = onReview) }
+        item {
+            MetadataBlock(
+                assignees = pr.assignees,
+                reviewers = pr.requested_reviewers,
+                labels = pr.labels,
+                milestone = pr.milestone,
+                onEdit = onEditMetadata,
+            )
+        }
         item { ChecksBlock(checks = bundle.checks) }
         item { ConversationBlock(items = bundle.conversation) }
         item {

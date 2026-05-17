@@ -7,13 +7,18 @@ import androidx.lifecycle.viewModelScope
 import com.redline.viewer.data.Loadable
 import com.redline.viewer.data.PullDetailBundle
 import com.redline.viewer.data.github.AuthState
+import com.redline.viewer.data.github.GhLabel
+import com.redline.viewer.data.github.GhMilestone
 import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.data.github.GhPullSearchItem
+import com.redline.viewer.data.github.GhPullUser
 import com.redline.viewer.data.github.GhRepo
 import com.redline.viewer.data.github.GhRepoOwner
 import com.redline.viewer.data.github.GhUser
 import com.redline.viewer.data.github.Github
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,12 +61,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _resolvingPullId = MutableStateFlow<Long?>(null)
     val resolvingPullId: StateFlow<Long?> = _resolvingPullId.asStateFlow()
 
+    private val _metadataOptions = MutableStateFlow<Loadable<MetadataOptions>>(Loadable.Idle)
+    val metadataOptions: StateFlow<Loadable<MetadataOptions>> = _metadataOptions.asStateFlow()
+
+    private val _metadataSaving = MutableStateFlow(false)
+    val metadataSaving: StateFlow<Boolean> = _metadataSaving.asStateFlow()
+
     private var authJob: Job? = null
     private var reposJob: Job? = null
     private var pullsJob: Job? = null
     private var detailJob: Job? = null
     private var searchedPullsJob: Job? = null
     private var resolvePullJob: Job? = null
+    private var metadataOptionsJob: Job? = null
+    private var metadataMutationJob: Job? = null
+    private var metadataOptionsRepoKey: String? = null
 
     // ─── Auth (web flow) ──────────────────────────────────────
 
@@ -89,6 +103,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _activeRepo.value = null
         _activePull.value = null
         _resolvingPullId.value = null
+        _metadataOptions.value = Loadable.Idle
+        _metadataSaving.value = false
+        metadataOptionsRepoKey = null
     }
 
     // ─── Loads ────────────────────────────────────────────────
@@ -223,8 +240,100 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ─── PR metadata ──────────────────────────────────────────
+
+    fun ensureMetadataOptionsLoaded(force: Boolean = false) {
+        val repo = _activeRepo.value ?: return
+        val key = "${repo.owner.login}/${repo.name}"
+        val sameRepo = metadataOptionsRepoKey == key
+        if (!force && sameRepo && _metadataOptions.value is Loadable.Ok) return
+        metadataOptionsJob?.cancel()
+        metadataOptionsRepoKey = key
+        metadataOptionsJob = viewModelScope.launch {
+            _metadataOptions.value = Loadable.Loading
+            try {
+                val opts = coroutineScope {
+                    val dUsers = async { github.assignableUsers(repo.owner.login, repo.name) }
+                    val dLabels = async { github.repoLabels(repo.owner.login, repo.name) }
+                    val dMilestones = async { github.repoMilestones(repo.owner.login, repo.name) }
+                    MetadataOptions(
+                        assignableUsers = dUsers.await(),
+                        labels = dLabels.await(),
+                        milestones = dMilestones.await(),
+                    )
+                }
+                _metadataOptions.value = Loadable.Ok(opts)
+            } catch (t: Throwable) {
+                _metadataOptions.value = Loadable.Err(t.message ?: "request failed")
+            }
+        }
+    }
+
+    fun setPullAssignees(logins: List<String>, onDone: (Throwable?) -> Unit = {}) =
+        mutateMetadata(onDone) { repo, pull ->
+            github.setAssignees(repo.owner.login, repo.name, pull.number, logins)
+        }
+
+    fun setPullReviewers(logins: List<String>, onDone: (Throwable?) -> Unit = {}) =
+        mutateMetadata(onDone) { repo, pull ->
+            val current = pull.requested_reviewers.map { it.login }.toSet()
+            val target = logins.toSet()
+            val toAdd = (target - current).toList()
+            val toRemove = (current - target).toList()
+            github.addReviewers(repo.owner.login, repo.name, pull.number, toAdd)
+            github.removeReviewers(repo.owner.login, repo.name, pull.number, toRemove)
+        }
+
+    fun setPullLabels(labels: List<String>, onDone: (Throwable?) -> Unit = {}) =
+        mutateMetadata(onDone) { repo, pull ->
+            github.setLabels(repo.owner.login, repo.name, pull.number, labels)
+        }
+
+    fun setPullMilestone(milestoneNumber: Int?, onDone: (Throwable?) -> Unit = {}) =
+        mutateMetadata(onDone) { repo, pull ->
+            github.setMilestone(repo.owner.login, repo.name, pull.number, milestoneNumber)
+        }
+
+    private fun mutateMetadata(
+        onDone: (Throwable?) -> Unit,
+        block: suspend (GhRepo, GhPull) -> Unit,
+    ) {
+        val repo = _activeRepo.value ?: return
+        val pull = _activePull.value ?: return
+        metadataMutationJob?.cancel()
+        _metadataSaving.value = true
+        metadataMutationJob = viewModelScope.launch {
+            try {
+                block(repo, pull)
+                refreshActivePull()
+                _metadataSaving.value = false
+                onDone(null)
+            } catch (t: Throwable) {
+                _metadataSaving.value = false
+                onDone(t)
+            }
+        }
+    }
+
+    private suspend fun refreshActivePull() {
+        val repo = _activeRepo.value ?: return
+        val pull = _activePull.value ?: return
+        val updated = github.pull(repo.owner.login, repo.name, pull.number)
+        _activePull.value = updated
+        val current = _detail.value
+        if (current is Loadable.Ok) {
+            _detail.value = Loadable.Ok(current.value.copy(pull = updated))
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         github.close()
     }
 }
+
+data class MetadataOptions(
+    val assignableUsers: List<GhPullUser>,
+    val labels: List<GhLabel>,
+    val milestones: List<GhMilestone>,
+)
