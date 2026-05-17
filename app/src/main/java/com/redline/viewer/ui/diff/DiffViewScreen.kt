@@ -28,8 +28,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,7 +51,6 @@ import com.redline.viewer.data.PendingComment
 import com.redline.viewer.data.github.GhPull
 import com.redline.viewer.ui.theme.JetBrainsMono
 import com.redline.viewer.ui.theme.RedlineColors
-import kotlinx.coroutines.launch
 
 data class CommentRequest(
     val side: CommentSide,
@@ -59,6 +58,8 @@ data class CommentRequest(
     val text: String,
     val fileShort: String,
 )
+
+private enum class ViewMode { Split, Inline }
 
 @Composable
 fun DiffViewScreen(
@@ -128,17 +129,28 @@ private fun Loaded(
     onToggleViewed: (String) -> Unit,
 ) {
     val file = bundle.files[fileIdx]
-    val diff = bundle.diffs[file.short].orEmpty()
-    val threads = bundle.commentsByPath[file.short].orEmpty()
     val pending = pendingComments.filter { it.fileShort == file.short }
 
-    val vScroll = rememberScrollState()
-    val hScroll = rememberScrollState()
     var scale by remember { mutableFloatStateOf(1f) }
-
-    val pagerState = rememberPagerState(initialPage = 1) { 3 }
-    val scope = rememberCoroutineScope()
     var splitFraction by remember { mutableFloatStateOf(0.5f) }
+    var viewMode by remember { mutableStateOf(ViewMode.Split) }
+    var swapSides by remember { mutableStateOf(false) }
+    var wordWrap by remember { mutableStateOf(false) }
+
+    val filePager = rememberPagerState(initialPage = fileIdx) { bundle.files.size }
+
+    // Pager → parent fileIdx (when user swipes).
+    LaunchedEffect(filePager) {
+        snapshotFlow { filePager.currentPage }.collect { page ->
+            if (page != fileIdx) setFileIdx(page)
+        }
+    }
+    // Parent fileIdx → pager (when drawer / chevron / jump triggers change).
+    LaunchedEffect(fileIdx) {
+        if (filePager.currentPage != fileIdx) {
+            filePager.animateScrollToPage(fileIdx)
+        }
+    }
 
     var drawerOpen by remember { mutableStateOf(false) }
     var commentsOpen by remember { mutableStateOf(false) }
@@ -165,48 +177,52 @@ private fun Loaded(
                 onToggleViewed = { onToggleViewed(file.path) },
             )
             ModeIndicator(
-                mode = pagerState.currentPage,
-                onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
+                viewMode = viewMode,
+                onSelectMode = { viewMode = it },
+                swap = swapSides,
+                onToggleSwap = { swapSides = !swapSides },
+                wordWrap = wordWrap,
+                onToggleWrap = { wordWrap = !wordWrap },
             )
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 HorizontalPager(
-                    state = pagerState,
-                    beyondViewportPageCount = 2,
+                    state = filePager,
+                    beyondViewportPageCount = 1,
                     modifier = Modifier.fillMaxSize(),
-                ) { page ->
-                    when (page) {
-                        0 -> CodePane(
-                            side = CommentSide.Old, diff = diff, threads = threads,
-                            pending = pending, fileShort = file.short,
-                            scale = scale, vScroll = vScroll, hScroll = hScroll,
-                            onScaleChange = { scale = it },
-                            onCommentLine = onCommentLine,
-                            label = "old", sublabel = "── ${pull.base.ref}",
-                            jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.Old },
-                            onJumpConsumed = { jumpTarget = null },
-                        )
-                        1 -> SplitPane(
-                            diff = diff, threads = threads, pending = pending,
-                            fileShort = file.short, scale = scale,
-                            vScroll = vScroll, hScroll = hScroll,
+                ) { pageIdx ->
+                    val pageFile = bundle.files[pageIdx]
+                    val pageDiff = bundle.diffs[pageFile.short].orEmpty()
+                    val pageThreads = bundle.commentsByPath[pageFile.short].orEmpty()
+                    val pagePending = pendingComments.filter { it.fileShort == pageFile.short }
+                    val pageVScroll = rememberScrollState()
+                    val pageHScroll = rememberScrollState()
+                    val pageJump = if (pageIdx == fileIdx) jumpTarget else null
+                    when (viewMode) {
+                        ViewMode.Split -> SplitPane(
+                            diff = pageDiff, threads = pageThreads, pending = pagePending,
+                            fileShort = pageFile.short, scale = scale,
+                            vScroll = pageVScroll, hScroll = pageHScroll,
                             splitFraction = splitFraction,
                             onSplitChange = { splitFraction = it.coerceIn(0.15f, 0.85f) },
                             onScaleChange = { scale = it },
                             onCommentLine = onCommentLine,
                             oldSublabel = "── ${pull.base.ref}",
                             newSublabel = "── ${pull.head.ref}",
-                            jumpTarget = jumpTarget,
+                            swap = swapSides,
+                            wordWrap = wordWrap,
+                            jumpTarget = pageJump,
                             onJumpConsumed = { jumpTarget = null },
                         )
-                        2 -> CodePane(
-                            side = CommentSide.New, diff = diff, threads = threads,
-                            pending = pending, fileShort = file.short,
-                            scale = scale, vScroll = vScroll, hScroll = hScroll,
+                        ViewMode.Inline -> InlinePane(
+                            diff = pageDiff, threads = pageThreads, pending = pagePending,
+                            fileShort = pageFile.short, scale = scale,
+                            vScroll = pageVScroll, hScroll = pageHScroll,
                             onScaleChange = { scale = it },
                             onCommentLine = onCommentLine,
-                            label = "new", sublabel = "── ${pull.head.ref}",
-                            jumpTarget = jumpTarget?.takeIf { it.side == CommentSide.New },
+                            sublabel = "${pull.base.ref} → ${pull.head.ref}",
+                            wordWrap = wordWrap,
+                            jumpTarget = pageJump,
                             onJumpConsumed = { jumpTarget = null },
                         )
                     }
@@ -301,11 +317,6 @@ private fun Loaded(
                     val idx = bundle.files.indexOfFirst { it.short == jump.fileShort }
                     if (idx >= 0 && idx != fileIdx) setFileIdx(idx)
                     jumpTarget = JumpTarget(line = jump.line, side = jump.side)
-                    // Auto-switch to split if the comment is on the opposite side
-                    val newPage = if (jump.side == CommentSide.Old) 1 else 1
-                    if (pagerState.currentPage != newPage) {
-                        scope.launch { pagerState.animateScrollToPage(newPage) }
-                    }
                 },
             )
         }
@@ -546,8 +557,14 @@ private fun ChevronButton(direction: ChevronDir, enabled: Boolean, onClick: () -
 }
 
 @Composable
-private fun ModeIndicator(mode: Int, onSelect: (Int) -> Unit) {
-    val labels = listOf("old", "split", "new")
+private fun ModeIndicator(
+    viewMode: ViewMode,
+    onSelectMode: (ViewMode) -> Unit,
+    swap: Boolean,
+    onToggleSwap: () -> Unit,
+    wordWrap: Boolean,
+    onToggleWrap: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -558,34 +575,55 @@ private fun ModeIndicator(mode: Int, onSelect: (Int) -> Unit) {
         Text("view:", fontFamily = JetBrainsMono, fontSize = 10.sp, color = RedlineColors.TextDim)
         Spacer(Modifier.width(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            labels.forEachIndexed { i, label ->
-                val active = i == mode
-                val accent = when (i) {
-                    0 -> RedlineColors.Accent
-                    2 -> RedlineColors.Green
-                    else -> RedlineColors.Text
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(if (active) RedlineColors.Surface2 else Color.Transparent)
-                        .clickable { onSelect(i) }
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        label,
-                        fontFamily = JetBrainsMono,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                        fontSize = 10.sp,
-                        color = if (active) accent else RedlineColors.TextMute,
-                    )
-                }
-            }
+            ModePill(label = "split", active = viewMode == ViewMode.Split) { onSelectMode(ViewMode.Split) }
+            ModePill(label = "inline", active = viewMode == ViewMode.Inline) { onSelectMode(ViewMode.Inline) }
         }
         Spacer(Modifier.weight(1f))
-        Text("swipe ↔", fontFamily = JetBrainsMono, fontSize = 10.sp, color = RedlineColors.TextMute)
+        if (viewMode == ViewMode.Split) {
+            TogglePill(label = "swap", active = swap, onClick = onToggleSwap)
+            Spacer(Modifier.width(6.dp))
+        }
+        TogglePill(label = "wrap", active = wordWrap, onClick = onToggleWrap)
     }
     HDivider()
+}
+
+@Composable
+private fun ModePill(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (active) RedlineColors.Surface2 else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            label,
+            fontFamily = JetBrainsMono,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            fontSize = 10.sp,
+            color = if (active) RedlineColors.Text else RedlineColors.TextMute,
+        )
+    }
+}
+
+@Composable
+private fun TogglePill(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (active) RedlineColors.Blue.copy(alpha = 0.18f) else RedlineColors.Surface2)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            label,
+            fontFamily = JetBrainsMono,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            fontSize = 10.sp,
+            color = if (active) RedlineColors.Blue else RedlineColors.TextMute,
+        )
+    }
 }
 
 @Composable

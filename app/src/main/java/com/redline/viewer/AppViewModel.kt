@@ -8,7 +8,9 @@ import com.redline.viewer.data.Loadable
 import com.redline.viewer.data.PullDetailBundle
 import com.redline.viewer.data.github.AuthState
 import com.redline.viewer.data.github.GhPull
+import com.redline.viewer.data.github.GhPullSearchItem
 import com.redline.viewer.data.github.GhRepo
+import com.redline.viewer.data.github.GhRepoOwner
 import com.redline.viewer.data.github.GhUser
 import com.redline.viewer.data.github.Github
 import kotlinx.coroutines.Job
@@ -42,16 +44,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _detail = MutableStateFlow<Loadable<PullDetailBundle>>(Loadable.Idle)
     val detail: StateFlow<Loadable<PullDetailBundle>> = _detail.asStateFlow()
 
+    private val _searchedPulls = MutableStateFlow<Loadable<List<GhPullSearchItem>>>(Loadable.Idle)
+    val searchedPulls: StateFlow<Loadable<List<GhPullSearchItem>>> = _searchedPulls.asStateFlow()
+
     private val _activeRepo = MutableStateFlow<GhRepo?>(null)
     val activeRepo: StateFlow<GhRepo?> = _activeRepo.asStateFlow()
 
     private val _activePull = MutableStateFlow<GhPull?>(null)
     val activePull: StateFlow<GhPull?> = _activePull.asStateFlow()
 
+    private val _resolvingPullId = MutableStateFlow<Long?>(null)
+    val resolvingPullId: StateFlow<Long?> = _resolvingPullId.asStateFlow()
+
     private var authJob: Job? = null
     private var reposJob: Job? = null
     private var pullsJob: Job? = null
     private var detailJob: Job? = null
+    private var searchedPullsJob: Job? = null
+    private var resolvePullJob: Job? = null
 
     // ─── Auth (web flow) ──────────────────────────────────────
 
@@ -75,8 +85,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _repos.value = Loadable.Idle
         _pulls.value = Loadable.Idle
         _detail.value = Loadable.Idle
+        _searchedPulls.value = Loadable.Idle
         _activeRepo.value = null
         _activePull.value = null
+        _resolvingPullId.value = null
     }
 
     // ─── Loads ────────────────────────────────────────────────
@@ -122,6 +134,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _activePull.value = pull
         _detail.value = Loadable.Idle
         loadDetail(force = true)
+    }
+
+    fun ensureSearchedPullsLoaded(force: Boolean = false) {
+        if (!force && _searchedPulls.value is Loadable.Ok) return
+        val login = (_viewer.value as? Loadable.Ok)?.value?.login
+        if (login.isNullOrBlank()) {
+            // Viewer not loaded yet — kick off ensureReposLoaded and wait for it.
+            searchedPullsJob?.cancel()
+            searchedPullsJob = viewModelScope.launch {
+                _searchedPulls.value = Loadable.Loading
+                try {
+                    val viewer = github.viewer()
+                    _viewer.value = Loadable.Ok(viewer)
+                    _searchedPulls.value = Loadable.Ok(github.searchInvolvedPulls(viewer.login))
+                } catch (t: Throwable) {
+                    _searchedPulls.value = Loadable.Err(t.message ?: "request failed")
+                }
+            }
+            return
+        }
+        searchedPullsJob?.cancel()
+        searchedPullsJob = viewModelScope.launch {
+            _searchedPulls.value = Loadable.Loading
+            try {
+                _searchedPulls.value = Loadable.Ok(github.searchInvolvedPulls(login))
+            } catch (t: Throwable) {
+                _searchedPulls.value = Loadable.Err(t.message ?: "request failed")
+            }
+        }
+    }
+
+    /**
+     * Resolve a cross-repo search item into a full [GhPull] + minimal [GhRepo],
+     * then invoke [onReady] on the main thread so the caller can navigate. If
+     * the fetch fails, [onReady] is not invoked and we leave the existing
+     * active selection alone.
+     */
+    fun openSearchedPull(item: GhPullSearchItem, onReady: () -> Unit) {
+        val parsed = parseRepositoryUrl(item.repository_url) ?: return
+        val (owner, name) = parsed
+        resolvePullJob?.cancel()
+        _resolvingPullId.value = item.number.toLong()
+        resolvePullJob = viewModelScope.launch {
+            try {
+                val full = github.pull(owner, name, item.number)
+                val repo = GhRepo(
+                    id = 0L,
+                    name = name,
+                    full_name = "$owner/$name",
+                    owner = GhRepoOwner(login = owner),
+                )
+                _activeRepo.value = repo
+                _activePull.value = full
+                _detail.value = Loadable.Idle
+                loadDetail(force = true)
+                _resolvingPullId.value = null
+                onReady()
+            } catch (t: Throwable) {
+                _resolvingPullId.value = null
+            }
+        }
+    }
+
+    private fun parseRepositoryUrl(url: String): Pair<String, String>? {
+        // e.g. https://api.github.com/repos/foo/bar
+        val marker = "/repos/"
+        val i = url.indexOf(marker)
+        if (i < 0) return null
+        val tail = url.substring(i + marker.length).trimEnd('/')
+        val parts = tail.split('/')
+        if (parts.size < 2) return null
+        return parts[0] to parts[1]
     }
 
     fun loadDetail(force: Boolean = false) {
