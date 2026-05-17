@@ -64,6 +64,26 @@ data class GhPull(
 )
 
 @Serializable
+data class GhPullSearchItem(
+    val number: Int,
+    val title: String,
+    val state: String,
+    val draft: Boolean = false,
+    val user: GhPullUser? = null,
+    val comments: Int = 0,
+    val updated_at: String,
+    val created_at: String,
+    val repository_url: String,
+)
+
+@Serializable
+data class GhPullSearchResponse(
+    val total_count: Int = 0,
+    val incomplete_results: Boolean = false,
+    val items: List<GhPullSearchItem> = emptyList(),
+)
+
+@Serializable
 data class GhFile(
     val sha: String? = null,
     val filename: String,

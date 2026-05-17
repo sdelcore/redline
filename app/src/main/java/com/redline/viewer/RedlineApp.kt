@@ -91,6 +91,8 @@ fun RedlineApp(
     val viewer by vm.viewer.collectAsState()
     val repos by vm.repos.collectAsState()
     val pulls by vm.pulls.collectAsState()
+    val searchedPulls by vm.searchedPulls.collectAsState()
+    val resolvingPullId by vm.resolvingPullId.collectAsState()
     val activeRepo by vm.activeRepo.collectAsState()
     val activePull by vm.activePull.collectAsState()
     val detail by vm.detail.collectAsState()
@@ -143,12 +145,21 @@ fun RedlineApp(
                     RepoPickerScreen(
                         viewer = viewer,
                         repos = repos,
+                        searchedPulls = searchedPulls,
+                        resolvingPullNumber = resolvingPullId?.toInt(),
                         onPickRepo = { r ->
                             vm.setActiveRepo(r)
                             nav.navigate(Routes.PRList)
                         },
+                        onPickSearchedPull = { item ->
+                            vm.openSearchedPull(item) {
+                                nav.navigate(Routes.Files)
+                            }
+                        },
                         onSignOut = { vm.signOut() },
                         onRetry = { vm.ensureReposLoaded(force = true) },
+                        onLoadPulls = { vm.ensureSearchedPullsLoaded() },
+                        onRetryPulls = { vm.ensureSearchedPullsLoaded(force = true) },
                     )
                 }
 

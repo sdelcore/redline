@@ -219,6 +219,18 @@ class Github(context: Context) {
             parameter("per_page", perPage)
         }.body()
 
+    /** Cross-repo: every open PR the viewer is involved in (author/assignee/reviewer/mentioned). */
+    suspend fun searchInvolvedPulls(login: String, perPage: Int = 50): List<GhPullSearchItem> =
+        api.get("search/issues") {
+            parameter("q", "is:open is:pr involves:$login archived:false")
+            parameter("sort", "updated")
+            parameter("order", "desc")
+            parameter("per_page", perPage)
+        }.body<GhPullSearchResponse>().items
+
+    suspend fun pull(owner: String, name: String, number: Int): GhPull =
+        api.get("repos/$owner/$name/pulls/$number").body()
+
     suspend fun pullBundle(repo: GhRepo, pull: GhPull): PullDetailBundle = coroutineScope {
         val owner = repo.owner.login
         val name = repo.name

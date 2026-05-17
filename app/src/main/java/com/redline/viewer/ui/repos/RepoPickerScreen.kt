@@ -46,6 +46,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.redline.viewer.data.Loadable
+import com.redline.viewer.data.avatarColorFor
+import com.redline.viewer.data.github.GhPullSearchItem
 import com.redline.viewer.data.github.GhRepo
 import com.redline.viewer.data.github.GhUser
 import com.redline.viewer.data.languageColor
@@ -59,13 +61,23 @@ import com.redline.viewer.ui.theme.RedlineColors
 fun RepoPickerScreen(
     viewer: Loadable<GhUser>,
     repos: Loadable<List<GhRepo>>,
+    searchedPulls: Loadable<List<GhPullSearchItem>>,
+    resolvingPullNumber: Int?,
     onPickRepo: (GhRepo) -> Unit,
+    onPickSearchedPull: (GhPullSearchItem) -> Unit,
     onSignOut: () -> Unit,
     onRetry: () -> Unit,
+    onLoadPulls: () -> Unit,
+    onRetryPulls: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     var scope by remember { mutableStateOf(RepoScope.All) }
+    var topTab by remember { mutableStateOf(TopTab.Repos) }
     val viewerLogin = (viewer as? Loadable.Ok)?.value?.login
+
+    LaunchedEffect(topTab) {
+        if (topTab == TopTab.Pulls) onLoadPulls()
+    }
 
     Column(
         modifier = Modifier
@@ -74,42 +86,75 @@ fun RepoPickerScreen(
             .windowInsetsPadding(WindowInsets.systemBars),
     ) {
         Header(viewer = viewer, onSignOut = onSignOut)
-        SearchBar(
-            query = query,
-            count = (repos as? Loadable.Ok)?.value?.size,
-            onChange = { query = it },
+        TopTabs(
+            tab = topTab,
+            reposCount = (repos as? Loadable.Ok)?.value?.size,
+            pullsCount = (searchedPulls as? Loadable.Ok)?.value?.size,
+            onSelect = { topTab = it },
         )
-        if (viewerLogin != null) {
-            ScopeTabs(scope = scope, viewerLogin = viewerLogin, onSelect = { scope = it })
-        }
-
-        LoadableContent(
-            state = repos,
-            onRetry = onRetry,
-            loadingMessage = "loading repos…",
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        ) { list ->
-            val filtered = list.filter { r ->
-                val matches = query.isBlank() || "${r.owner.login}/${r.name}"
-                    .contains(query, ignoreCase = true)
-                val inScope = when (scope) {
-                    RepoScope.All -> true
-                    RepoScope.Mine -> viewerLogin != null && r.owner.login == viewerLogin
+        when (topTab) {
+            TopTab.Repos -> {
+                SearchBar(
+                    query = query,
+                    count = (repos as? Loadable.Ok)?.value?.size,
+                    onChange = { query = it },
+                )
+                if (viewerLogin != null) {
+                    ScopeTabs(scope = scope, viewerLogin = viewerLogin, onSelect = { scope = it })
                 }
-                matches && inScope
-            }
-            if (filtered.isEmpty()) {
-                StatusRow(if (query.isBlank()) "no repos" else "no repos match \"$query\"")
-            } else {
-                LazyColumn(contentPadding = PaddingValues(bottom = 60.dp)) {
-                    item {
-                        SectionLabel(
-                            label = if (scope == RepoScope.Mine) "your repos" else "all repos",
-                            count = filtered.size,
-                        )
+
+                LoadableContent(
+                    state = repos,
+                    onRetry = onRetry,
+                    loadingMessage = "loading repos…",
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                ) { list ->
+                    val filtered = list.filter { r ->
+                        val matches = query.isBlank() || "${r.owner.login}/${r.name}"
+                            .contains(query, ignoreCase = true)
+                        val inScope = when (scope) {
+                            RepoScope.All -> true
+                            RepoScope.Mine -> viewerLogin != null && r.owner.login == viewerLogin
+                        }
+                        matches && inScope
                     }
-                    items(filtered, key = { it.id }) { r ->
-                        RepoRow(r, onClick = { onPickRepo(r) })
+                    if (filtered.isEmpty()) {
+                        StatusRow(if (query.isBlank()) "no repos" else "no repos match \"$query\"")
+                    } else {
+                        LazyColumn(contentPadding = PaddingValues(bottom = 60.dp)) {
+                            item {
+                                SectionLabel(
+                                    label = if (scope == RepoScope.Mine) "your repos" else "all repos",
+                                    count = filtered.size,
+                                )
+                            }
+                            items(filtered, key = { it.id }) { r ->
+                                RepoRow(r, onClick = { onPickRepo(r) })
+                            }
+                        }
+                    }
+                }
+            }
+            TopTab.Pulls -> {
+                LoadableContent(
+                    state = searchedPulls,
+                    onRetry = onRetryPulls,
+                    loadingMessage = "loading open PRs…",
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                ) { list ->
+                    if (list.isEmpty()) {
+                        StatusRow("no open PRs involving you")
+                    } else {
+                        LazyColumn(contentPadding = PaddingValues(bottom = 60.dp)) {
+                            item { SectionLabel(label = "open PRs", count = list.size) }
+                            items(list, key = { it.number.toLong() * 1_000_003 + it.repository_url.hashCode() }) { pr ->
+                                SearchedPullRow(
+                                    pr = pr,
+                                    busy = resolvingPullNumber == pr.number,
+                                    onClick = { onPickSearchedPull(pr) },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -118,6 +163,176 @@ fun RepoPickerScreen(
 }
 
 private enum class RepoScope { All, Mine }
+private enum class TopTab { Repos, Pulls }
+
+@Composable
+private fun TopTabs(
+    tab: TopTab,
+    reposCount: Int?,
+    pullsCount: Int?,
+    onSelect: (TopTab) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        TopTabPill("repos", reposCount, tab == TopTab.Repos) { onSelect(TopTab.Repos) }
+        TopTabPill("PRs", pullsCount, tab == TopTab.Pulls) { onSelect(TopTab.Pulls) }
+    }
+    HDivider()
+}
+
+@Composable
+private fun TopTabPill(label: String, count: Int?, active: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) RedlineColors.Surface2 else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            fontFamily = JetBrainsMono,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            fontSize = 12.sp,
+            color = if (active) RedlineColors.Text else RedlineColors.TextDim,
+        )
+        if (count != null) {
+            Spacer(Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (active) RedlineColors.Bg else Color.Transparent)
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    count.toString(),
+                    fontFamily = JetBrainsMono,
+                    fontSize = 10.sp,
+                    color = RedlineColors.TextMute,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchedPullRow(pr: GhPullSearchItem, busy: Boolean, onClick: () -> Unit) {
+    val author = pr.user?.login.orEmpty()
+    val repoLabel = pr.repository_url.substringAfter("/repos/").trimEnd('/')
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !busy, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(avatarColorFor(author)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    author.take(1).uppercase().ifEmpty { "?" },
+                    fontFamily = JetBrainsMono,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color = Color.White,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        repoLabel,
+                        fontFamily = JetBrainsMono,
+                        fontSize = 11.sp,
+                        color = RedlineColors.TextMute,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("·", fontFamily = JetBrainsMono, fontSize = 11.sp, color = RedlineColors.TextMute)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "#${pr.number}",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 11.sp,
+                        color = RedlineColors.TextMute,
+                    )
+                    if (pr.draft) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(RedlineColors.Surface2)
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                "DRAFT",
+                                fontFamily = JetBrainsMono,
+                                fontSize = 9.sp,
+                                color = RedlineColors.TextDim,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        timeAgo(pr.updated_at),
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = RedlineColors.TextMute,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    pr.title,
+                    fontFamily = Inter,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.sp,
+                    color = if (busy) RedlineColors.TextMute else RedlineColors.Text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "@$author",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = RedlineColors.TextMute,
+                    )
+                    if (pr.comments > 0) {
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "💬 ${pr.comments}",
+                            fontFamily = JetBrainsMono,
+                            fontSize = 10.sp,
+                            color = RedlineColors.TextMute,
+                        )
+                    }
+                    if (busy) {
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "opening…",
+                            fontFamily = JetBrainsMono,
+                            fontSize = 10.sp,
+                            color = RedlineColors.Blue,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    HDivider()
+}
 
 @Composable
 private fun Header(viewer: Loadable<GhUser>, onSignOut: () -> Unit) {
